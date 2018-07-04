@@ -28,6 +28,7 @@ static struct device *openfibersDevice = NULL; ///< The device-driver device str
 static int openfibers_dev_open(struct inode *, struct file *);
 static int openfibers_dev_release(struct inode *, struct file *);
 static ssize_t openfibers_dev_read(struct file *, char *, size_t, loff_t *);
+static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
 
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
@@ -87,8 +88,8 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
 {
     switch (cmd)
     {
-    case IOCTL_OPENFIBERS_PING:
-        pr_info("pinged")
+    case OPENFIBERS_IOCTL_PING:
+        pr_info("ping");
         break;
     default:
         return -EINVAL;
