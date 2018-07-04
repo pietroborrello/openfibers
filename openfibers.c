@@ -16,7 +16,7 @@
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("pietroborrello");
-MODULE_DESCRIPTION("User Level Thread back-end");
+MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
@@ -34,11 +34,12 @@ static ssize_t openfibers_dev_read(struct file *, char *, size_t, loff_t *);
  *  using a C99 syntax structure. char devices usually implement open, read, write and release calls
  */
 static struct file_operations dev_fops =
-    {
-        .owner = THIS_MODULE,
-        .open = openfibers_dev_open,
-        .read = openfibers_dev_read,
-        .release = openfibers_dev_release,
+{
+    .owner = THIS_MODULE,
+    .open = openfibers_dev_open,
+    .read = openfibers_dev_read,
+    .unlocked_ioctl = openfibers_dev_ioctl,
+    .release = openfibers_dev_release,
 };
 
 /** @brief The device open function that is called each time the device is opened
@@ -72,21 +73,26 @@ static int openfibers_dev_release(struct inode *inodep, struct file *filep)
  */
 static ssize_t openfibers_dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset)
 {
-    /*int error_count = 0;
-    // copy_to_user has the format ( * to, *from, size) and returns 0 on success
-    error_count = copy_to_user(buffer, message, size_of_message);
-
-    if (error_count == 0)
-    { // if true then have success
-        printk(KERN_INFO "EBBChar: Sent %d characters to the user\n", size_of_message);
-        return (size_of_message = 0); // clear the position to the start and return 0
-    }
-    else
-    {
-        printk(KERN_INFO "EBBChar: Failed to send %d characters to the user\n", error_count);
-        return -EFAULT; // Failed -- return a bad address message (i.e. -14)
-    }*/
     pr_info("Device read\n");
+    return 0;
+}
+
+/** @brief * This function is called whenever a process tries to do an ioctl on our
+ *  device file.
+ *  @param f A pointer to a file object (defined in linux/fs.h)
+ *  @param cmd The command
+ *  @param arg The arguments
+ */
+static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
+{
+    switch (cmd)
+    {
+    case IOCTL_OPENFIBERS_PING:
+        pr_info("pinged")
+        break;
+    default:
+        return -EINVAL;
+    }
     return 0;
 }
 
