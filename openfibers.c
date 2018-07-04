@@ -97,6 +97,14 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
     return 0;
 }
 
+// modify permissions
+static char *openfibers_devnode(struct device *dev, umode_t *mode)
+{
+    if (mode)
+        *mode = 0644;
+    return NULL; 
+}
+
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C file. The __init
  *  macro means that for a built-in driver (not a LKM) the function is only used at initialization
@@ -121,6 +129,7 @@ static int __init fibers_init(void)
         pr_crit("Failed to register device class\n");
         return PTR_ERR(openfibersClass); // Correct way to return an error on a pointer
     }
+    openfibersClass->devnode = openfibers_devnode;
 
     // Register the device driver
     openfibersDevice = device_create(openfibersClass, NULL, MKDEV(majorNumber, 0), NULL, DEVICE_NAME);
