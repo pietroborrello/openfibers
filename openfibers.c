@@ -89,7 +89,8 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
     switch (cmd)
     {
     case OPENFIBERS_IOCTL_PING:
-        pr_info("ping");
+
+        pr_info("ping by pid: %d", current->pid);
         break;
     default:
         return -EINVAL;
