@@ -8,6 +8,7 @@
 #include <linux/kernel.h>     // Contains types, macros, functions for the kernel
 #include <linux/fs.h>         // Header for the Linux file system support
 #include <linux/uaccess.h>    // Required for the copy to user function
+#include <linux/kprobes.h>    // Required for kprobe
 
 #define DEVICE_NAME "openfibers" ///< The device will appear at /dev/... using this value
 #define CLASS_NAME "openfibers"      ///< The device class -- this is a character device driver
@@ -29,6 +30,9 @@ static int openfibers_dev_open(struct inode *, struct file *);
 static int openfibers_dev_release(struct inode *, struct file *);
 static ssize_t openfibers_dev_read(struct file *, char *, size_t, loff_t *);
 static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
+
+// kprobe handler
+static struct kprobe kp;
 
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
@@ -90,7 +94,7 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
     {
     case OPENFIBERS_IOCTL_PING:
 
-        pr_info("ping by pid: %d", current->pid);
+        pr_info("ping by pid: %d\n", current->pid);
         break;
     default:
         return -EINVAL;
@@ -106,6 +110,14 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
     return NULL; 
 }
 
+
+// kprobe called function
+static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
+{
+    pr_info("exiting: %d\n", current->pid);
+    return 0;
+}
+
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C file. The __init
  *  macro means that for a built-in driver (not a LKM) the function is only used at initialization
@@ -114,6 +126,8 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
  */
 static int __init fibers_init(void)
 {
+    int ret;
+
     // Try to dynamically allocate a major number for the device -- more difficult but worth it
     majorNumber = register_chrdev(0, DEVICE_NAME, &dev_fops);
     if (majorNumber < 0)
@@ -143,6 +157,17 @@ static int __init fibers_init(void)
     }
 
     pr_info("registered correctly with major number %d\n", majorNumber);
+
+    // register the kprobe
+    kp.pre_handler = handle_kprobe;
+    kp.symbol_name = "do_group_exit";
+    ret = register_kprobe(&kp);
+    if (ret < 0)
+    {
+        pr_crit("Failed to set kprobe\n");
+        return ret;
+    }
+
     return 0;
 }
 
@@ -156,6 +181,7 @@ static void __exit fibers_cleanup(void)
     class_unregister(openfibersClass);                      // unregister the device class
     class_destroy(openfibersClass);                         // remove the device class
     unregister_chrdev(majorNumber, DEVICE_NAME);         // unregister the major number
+    unregister_kprobe(&kp);                              // remove kprobe
     pr_info("cleanup done\n");
     return;
 }
