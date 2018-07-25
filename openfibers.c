@@ -20,6 +20,8 @@ MODULE_AUTHOR("pietroborrello");
 MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
+struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
+
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
 static struct class *openfibersClass = NULL;   ///< The device-driver class struct pointer
@@ -33,6 +35,55 @@ static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
 
 // kprobe handler
 static struct kprobe kp;
+
+
+struct fibers_by_tgid_node *rbtree_tgid_search(struct rb_root *root, pid_t tgid)
+{
+    struct rb_node *node = root->rb_node;
+
+    while (node)
+    {
+        struct fibers_by_tgid_node *data = container_of(node, struct fibers_by_tgid_node, node);
+        int result;
+
+        result = tgid - data->tgid;
+
+        if (result < 0)
+            node = node->rb_left;
+        else if (result > 0)
+            node = node->rb_right;
+        else
+            return data;
+    }
+    return NULL;
+}
+
+int rbtree_tgid_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
+{
+    struct rb_node **new = &(root->rb_node), *parent = NULL;
+
+    /* Figure out where to put new node */
+    while (*new)
+    {
+        struct fibers_by_tgid_node *this = container_of(*new, struct fibers_by_tgid_node, node);
+        int result = data->tgid - this->tgid;
+        parent = *new;
+        if (result < 0)
+            new = &((*new)->rb_left);
+        else if (result > 0)
+            new = &((*new)->rb_right);
+        else
+            return FALSE;
+    }
+
+    /* Add new node and rebalance tree. */
+    rb_link_node(&data->node, parent, new);
+    rb_insert_color(&data->node, root);
+
+    return TRUE;
+}
+
+
 
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
@@ -53,7 +104,7 @@ static struct file_operations dev_fops =
  */
 static int openfibers_dev_open(struct inode *inodep, struct file *filep)
 {
-    pr_info("Device has been opened\n");
+    //pr_info("Device has been opened\n");
     return 0;
 }
 
@@ -64,7 +115,7 @@ static int openfibers_dev_open(struct inode *inodep, struct file *filep)
  */
 static int openfibers_dev_release(struct inode *inodep, struct file *filep)
 {
-    pr_info("Device successfully closed\n");
+    //pr_info("Device successfully closed\n");
     return 0;
 }
 
@@ -82,6 +133,31 @@ static ssize_t openfibers_dev_read(struct file *filep, char *buffer, size_t len,
     return 0;
 }
 
+static struct fibers_by_tgid_node* initialize_fibers(void)
+{
+    int ret;
+    struct fibers_by_tgid_node *data;
+
+    pr_info("initializing fibers for: %d\n", current->tgid);
+
+    data = kmalloc(sizeof(struct fibers_by_tgid_node), GFP_KERNEL);
+    if(!data)
+    {
+        pr_crit("memory allocation failed\n");
+        return ERR_PTR(-ENOMEM);
+    }
+    data->tgid = current->tgid;
+
+    ret = rbtree_tgid_insert(&fibers_by_tgid_tree, data);
+    if (!ret)
+        {
+            pr_crit("insertion in fibers by tgid failed\n");
+            return ERR_PTR(-EEXIST);
+        }
+
+    return data;
+}
+
 /** @brief * This function is called whenever a process tries to do an ioctl on our
  *  device file.
  *  @param f A pointer to a file object (defined in linux/fs.h)
@@ -93,8 +169,31 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
     switch (cmd)
     {
     case OPENFIBERS_IOCTL_PING:
-
-        pr_info("ping by pid: %d\n", current->pid);
+        {
+            struct fibers_by_tgid_node *data;
+            data = rbtree_tgid_search(&fibers_by_tgid_tree, current->tgid);
+            if (!data){
+                data = initialize_fibers();
+                if (IS_ERR(data))
+                {
+                    pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
+                    return PTR_ERR(data);
+                }
+            }
+            pr_info("fibers ok for: %d\n", data->tgid);
+        }
+        break;
+    case OPENFIBERS_IOCTL_CREATE_FIBER:
+        break;
+    case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
+        break;
+    case OPENFIBERS_IOCTL_FLS_ALLOC:
+        break;
+    case OPENFIBERS_IOCTL_FLS_FREE:
+        break;
+    case OPENFIBERS_IOCTL_FLS_GET:
+        break;
+    case OPENFIBERS_IOCTL_FLS_SET:
         break;
     default:
         return -EINVAL;
@@ -114,7 +213,15 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
 // kprobe called function
 static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
 {
-    pr_info("exiting: %d\n", current->pid);
+    //pr_info("exiting: %d\n", current->pid);
+    struct fibers_by_tgid_node *data = rbtree_tgid_search(&fibers_by_tgid_tree, current->tgid);
+
+    if (data)
+    {
+        pr_info("cleanup: %d\n", data->tgid);
+        rb_erase(&data->node, &fibers_by_tgid_tree);
+        kfree(data);
+    }
     return 0;
 }
 

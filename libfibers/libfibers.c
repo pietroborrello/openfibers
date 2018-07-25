@@ -5,9 +5,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 
-#include "../openfibers.h"
-
-#define OPENFIBERS_DEVICE_FILE_NAME  "/dev/openfibers"
+#include "libfibers.h"
 
 void openfibers_ioctl_ping(int fd)
 {
@@ -30,6 +28,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    openfibers_ioctl_ping(file_desc);
     openfibers_ioctl_ping(file_desc);
 
     close(file_desc);
