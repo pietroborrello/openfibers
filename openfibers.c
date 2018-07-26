@@ -268,9 +268,9 @@ static void fibers_tree_cleanup(struct rb_root *root)
     {
         struct fibers_node *this = container_of(next, struct fibers_node, node);
         next = rb_next_postorder(next);
-        pr_crit("%p\n", next);
-        kfree(this->fiber);
+
         rb_erase(&this->node, root);
+        kfree(this->fiber);
         kfree(this);
     }
 }
@@ -282,11 +282,12 @@ static void tgid_fibers_tree_cleanup(struct rb_root *root)
     // postorder visit to free all tree
     while (next)
     {
-        struct fibers_node *this = container_of(next, struct fibers_node, node);
+        struct fibers_by_tgid_node *this = container_of(next, struct fibers_by_tgid_node, node);
         next = rb_next_postorder(next);
 
-        kfree(this->fiber);
         rb_erase(&this->node, root);
+        fibers_tree_cleanup(this->fibers_root);
+        kfree(this->fibers_root);
         kfree(this);
     }
 }
@@ -301,7 +302,7 @@ static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
         pr_info("cleanup: %d\n", data->tgid);
         rb_erase(&data->node, &fibers_by_tgid_tree);
         fibers_tree_cleanup(data->fibers_root);
-        //kfree(data->fibers_root);
+        kfree(data->fibers_root);
         kfree(data);
     }
 
@@ -374,7 +375,7 @@ static void __exit fibers_cleanup(void)
     unregister_kprobe(&kp);                              // remove kprobe
 
     // cleanup all the fibers pending
-
+    tgid_fibers_tree_cleanup(&fibers_by_tgid_tree);
 
     pr_info("cleanup done\n");
     return;
