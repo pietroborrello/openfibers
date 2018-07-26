@@ -102,10 +102,12 @@ int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
     rb_insert_color(&data->node, root);
 
     // allocate the root for fibers for current process when inserting new node by tgid
-    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL);
+    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
     if(!data->fibers_root)
         return FALSE;
 
+    // start with empty tree
+    data->fibers_root->rb_node = NULL;
     return TRUE;
 }
 
@@ -196,13 +198,6 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
         return ERR_PTR(-ENOMEM);
     }
     data->tgid = current->tgid;
-    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
-    if (!data->fibers_root)
-    {
-        pr_crit("memory allocation failed\n");
-        return ERR_PTR(-ENOMEM);
-    }
-    *(data->fibers_root) = RB_ROOT;
 
     ret = tgid_rbtree_insert(&fibers_by_tgid_tree, data);
     if (!ret)
@@ -266,9 +261,7 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
 
 static void fibers_tree_cleanup(struct rb_root *root)
 {
-    pr_crit("%p\n", root->rb_node);
     struct rb_node *next = rb_first_postorder(root);
-    pr_crit("%p\n", next);
 
     // postorder visit to free all tree
     while (next)
@@ -307,7 +300,6 @@ static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
     if (data){
         pr_info("cleanup: %d\n", data->tgid);
         rb_erase(&data->node, &fibers_by_tgid_tree);
-        
         fibers_tree_cleanup(data->fibers_root);
         //kfree(data->fibers_root);
         kfree(data);
