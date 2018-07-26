@@ -29,11 +29,18 @@ typedef pid_t fid_t;
 typedef struct
 {
     volatile bool running;
-    fid_t fid;
 } fiber_t;
+
+struct fibers_node
+{
+    struct rb_node node;
+    fid_t fid;
+    fiber_t *fiber;
+};
 
 struct fibers_by_tgid_node
 {
     struct rb_node node;
     pid_t tgid;
+    struct rb_root* fibers_root;
 };

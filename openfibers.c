@@ -37,7 +37,7 @@ static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
 static struct kprobe kp;
 
 
-struct fibers_by_tgid_node *rbtree_tgid_search(struct rb_root *root, pid_t tgid)
+struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
 {
     struct rb_node *node = root->rb_node;
 
@@ -58,7 +58,28 @@ struct fibers_by_tgid_node *rbtree_tgid_search(struct rb_root *root, pid_t tgid)
     return NULL;
 }
 
-int rbtree_tgid_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
+struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid)
+{
+    struct rb_node *node = root->rb_node;
+
+    while (node)
+    {
+        struct fibers_node *data = container_of(node, struct fibers_node, node);
+        int result;
+
+        result = fid - data->fid;
+
+        if (result < 0)
+            node = node->rb_left;
+        else if (result > 0)
+            node = node->rb_right;
+        else
+            return data;
+    }
+    return NULL;
+}
+
+int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
 {
     struct rb_node **new = &(root->rb_node), *parent = NULL;
 
@@ -80,10 +101,38 @@ int rbtree_tgid_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
     rb_link_node(&data->node, parent, new);
     rb_insert_color(&data->node, root);
 
+    // allocate the root for fibers for current process when inserting new node by tgid
+    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL);
+    if(!data->fibers_root)
+        return FALSE;
+
     return TRUE;
 }
 
+int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data)
+{
+    struct rb_node **new = &(root->rb_node), *parent = NULL;
 
+    /* Figure out where to put new node */
+    while (*new)
+    {
+        struct fibers_node *this = container_of(*new, struct fibers_node, node);
+        int result = data->fid - this->fid;
+        parent = *new;
+        if (result < 0)
+            new = &((*new)->rb_left);
+        else if (result > 0)
+            new = &((*new)->rb_right);
+        else
+            return FALSE;
+    }
+
+    /* Add new node and rebalance tree. */
+    rb_link_node(&data->node, parent, new);
+    rb_insert_color(&data->node, root);
+
+    return TRUE;
+}
 
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
@@ -133,7 +182,7 @@ static ssize_t openfibers_dev_read(struct file *filep, char *buffer, size_t len,
     return 0;
 }
 
-static struct fibers_by_tgid_node* initialize_fibers(void)
+static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
 {
     int ret;
     struct fibers_by_tgid_node *data;
@@ -147,8 +196,15 @@ static struct fibers_by_tgid_node* initialize_fibers(void)
         return ERR_PTR(-ENOMEM);
     }
     data->tgid = current->tgid;
+    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
+    if (!data->fibers_root)
+    {
+        pr_crit("memory allocation failed\n");
+        return ERR_PTR(-ENOMEM);
+    }
+    *(data->fibers_root) = RB_ROOT;
 
-    ret = rbtree_tgid_insert(&fibers_by_tgid_tree, data);
+    ret = tgid_rbtree_insert(&fibers_by_tgid_tree, data);
     if (!ret)
         {
             pr_crit("insertion in fibers by tgid failed\n");
@@ -171,16 +227,15 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
     case OPENFIBERS_IOCTL_PING:
         {
             struct fibers_by_tgid_node *data;
-            data = rbtree_tgid_search(&fibers_by_tgid_tree, current->tgid);
+            data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
             if (!data){
-                data = initialize_fibers();
+                data = initialize_fibers_for_current();
                 if (IS_ERR(data))
                 {
                     pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
                     return PTR_ERR(data);
                 }
             }
-            pr_info("fibers ok for: %d\n", data->tgid);
         }
         break;
     case OPENFIBERS_IOCTL_CREATE_FIBER:
@@ -209,19 +264,55 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
     return NULL; 
 }
 
+static void fibers_tree_cleanup(struct rb_root *root)
+{
+    pr_crit("%p\n", root->rb_node);
+    struct rb_node *next = rb_first_postorder(root);
+    pr_crit("%p\n", next);
+
+    // postorder visit to free all tree
+    while (next)
+    {
+        struct fibers_node *this = container_of(next, struct fibers_node, node);
+        next = rb_next_postorder(next);
+        pr_crit("%p\n", next);
+        kfree(this->fiber);
+        rb_erase(&this->node, root);
+        kfree(this);
+    }
+}
+
+static void tgid_fibers_tree_cleanup(struct rb_root *root)
+{
+    struct rb_node *next = rb_first_postorder(root);
+
+    // postorder visit to free all tree
+    while (next)
+    {
+        struct fibers_node *this = container_of(next, struct fibers_node, node);
+        next = rb_next_postorder(next);
+
+        kfree(this->fiber);
+        rb_erase(&this->node, root);
+        kfree(this);
+    }
+}
 
 // kprobe called function
 static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
 {
     //pr_info("exiting: %d\n", current->pid);
-    struct fibers_by_tgid_node *data = rbtree_tgid_search(&fibers_by_tgid_tree, current->tgid);
+    struct fibers_by_tgid_node *data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
 
-    if (data)
-    {
+    if (data){
         pr_info("cleanup: %d\n", data->tgid);
         rb_erase(&data->node, &fibers_by_tgid_tree);
+        
+        fibers_tree_cleanup(data->fibers_root);
+        //kfree(data->fibers_root);
         kfree(data);
     }
+
     return 0;
 }
 
@@ -289,6 +380,10 @@ static void __exit fibers_cleanup(void)
     class_destroy(openfibersClass);                         // remove the device class
     unregister_chrdev(majorNumber, DEVICE_NAME);         // unregister the major number
     unregister_kprobe(&kp);                              // remove kprobe
+
+    // cleanup all the fibers pending
+
+
     pr_info("cleanup done\n");
     return;
 }
