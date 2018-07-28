@@ -100,14 +100,6 @@ int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
     /* Add new node and rebalance tree. */
     rb_link_node(&data->node, parent, new);
     rb_insert_color(&data->node, root);
-
-    // allocate the root for fibers for current process when inserting new node by tgid
-    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
-    if(!data->fibers_root)
-        return FALSE;
-
-    // start with empty tree
-    data->fibers_root->rb_node = NULL;
     return TRUE;
 }
 
@@ -198,6 +190,14 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
         return ERR_PTR(-ENOMEM);
     }
     data->tgid = current->tgid;
+    data->max_fid = 0;
+    // allocate the root for fibers for current process when inserting new node by tgid
+    data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
+    if (!data->fibers_root)
+        return FALSE;
+
+    // start with empty tree
+    data->fibers_root->rb_node = NULL;
 
     ret = tgid_rbtree_insert(&fibers_by_tgid_tree, data);
     if (!ret)
@@ -220,20 +220,43 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
     switch (cmd)
     {
     case OPENFIBERS_IOCTL_PING:
-        {
-            struct fibers_by_tgid_node *data;
-            data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
-            if (!data){
-                data = initialize_fibers_for_current();
-                if (IS_ERR(data))
-                {
-                    pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
-                    return PTR_ERR(data);
-                }
+    {
+        struct fibers_by_tgid_node *data;
+        struct rb_node *node;
+        data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+        if (!data){
+            data = initialize_fibers_for_current();
+            if (IS_ERR(data))
+            {
+                pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
+                return PTR_ERR(data);
             }
         }
+        for (node = rb_first(data->fibers_root); node; node = rb_next(node))
+            pr_info("fid=%d\n", rb_entry(node, struct fibers_node, node)->fid);
+    }
         break;
     case OPENFIBERS_IOCTL_CREATE_FIBER:
+    {
+        struct fibers_by_tgid_node *tgid_data;
+        struct fibers_node *fiber_data;
+        tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+        if (!tgid_data)
+        {
+            tgid_data = initialize_fibers_for_current();
+            if (IS_ERR(tgid_data))
+            {
+                pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
+                return PTR_ERR(tgid_data);
+            }
+        }
+        fiber_data = kmalloc(sizeof(struct fibers_node), GFP_KERNEL | __GFP_ZERO);
+        if (!fiber_data)
+            return -ENOMEM;
+        fiber_data->fid = tgid_data->max_fid++;
+        fiber_data->fiber = NULL;
+        return fid_rbtree_insert(tgid_data->fibers_root, fiber_data);
+    }
         break;
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
         break;

@@ -17,6 +17,16 @@ void openfibers_ioctl_ping(int fd)
     printf("openfibers ping done\n");
 }
 
+void openfibers_ioctl_create_fiber(int fd)
+{
+    if (ioctl(fd, OPENFIBERS_IOCTL_CREATE_FIBER) == -1)
+    {
+        perror("openfibers ioctl fiber create failed");
+        return;
+    }
+    printf("openfibers fiber create done\n");
+}
+
 int main(int argc, char *argv[])
 {
     int file_desc, ret_val;
@@ -29,6 +39,9 @@ int main(int argc, char *argv[])
     }
 
     openfibers_ioctl_ping(file_desc);
+    openfibers_ioctl_create_fiber(file_desc);
+    openfibers_ioctl_create_fiber(file_desc);
+    openfibers_ioctl_create_fiber(file_desc);
     openfibers_ioctl_ping(file_desc);
 
     close(file_desc);

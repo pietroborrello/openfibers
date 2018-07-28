@@ -42,5 +42,6 @@ struct fibers_by_tgid_node
 {
     struct rb_node node;
     pid_t tgid;
+    fid_t max_fid;
     struct rb_root* fibers_root;
 };
