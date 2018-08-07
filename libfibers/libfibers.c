@@ -17,14 +17,28 @@ void openfibers_ioctl_ping(int fd)
     printf("openfibers ping done\n");
 }
 
-void openfibers_ioctl_create_fiber(int fd)
+int openfibers_ioctl_create_fiber(int fd, unsigned long addr)
 {
-    if (ioctl(fd, OPENFIBERS_IOCTL_CREATE_FIBER) == -1)
+    int res = ioctl(fd, OPENFIBERS_IOCTL_CREATE_FIBER, addr);
+    if (res == -1)
     {
         perror("openfibers ioctl fiber create failed");
-        return;
+        return -1;
     }
-    printf("openfibers fiber create done\n");
+    printf("openfibers fiber %d create done\n", res);
+    return res;
+}
+
+int openfibers_ioctl_switch_to_fiber(int fd, unsigned long fid)
+{
+    int res = ioctl(fd, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    if (res == -1)
+    {
+        perror("openfibers ioctl fiber switch failed");
+        return -1;
+    }
+    printf("openfibers fiber %d switch done\n", res);
+    return res;
 }
 
 int main(int argc, char *argv[])
@@ -38,11 +52,12 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    openfibers_ioctl_create_fiber(file_desc, (unsigned long) main);
+    openfibers_ioctl_create_fiber(file_desc, (unsigned long) 0x10000);
+    openfibers_ioctl_create_fiber(file_desc, (unsigned long)0x20000);
     openfibers_ioctl_ping(file_desc);
-    openfibers_ioctl_create_fiber(file_desc);
-    openfibers_ioctl_create_fiber(file_desc);
-    openfibers_ioctl_create_fiber(file_desc);
-    openfibers_ioctl_ping(file_desc);
+
+    openfibers_ioctl_switch_to_fiber(0);
 
     close(file_desc);
     return 0;

@@ -21,6 +21,7 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
 struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
+static __thread fiber_t *current_fiber = NULL;
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
@@ -209,13 +210,60 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
     return data;
 }
 
-/** @brief * This function is called whenever a process tries to do an ioctl on our
+// create a new fiber
+static long openfibers_ioctl_create_fiber(unsigned long start_address, unsigned long parameter)
+{
+    struct fibers_by_tgid_node *tgid_data;
+    struct fibers_node *fiber_data;
+    tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+    if (!tgid_data)
+    {
+        tgid_data = initialize_fibers_for_current();
+        if (IS_ERR(tgid_data))
+        {
+            pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
+            return PTR_ERR(tgid_data);
+        }
+    }
+    fiber_data = kmalloc(sizeof(struct fibers_node), GFP_KERNEL | __GFP_ZERO);
+    if (!fiber_data)
+        return -ENOMEM;
+    fiber_data->fid = tgid_data->max_fid++;
+    fiber_data->fiber.running = FALSE;
+    fiber_data->fiber.start_address = start_address;
+    if(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data))
+        return -ENOMEM;
+    return fiber_data->fid;
+}
+
+// switch to a new fiber
+static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
+{
+    struct fibers_by_tgid_node *tgid_data;
+    struct fibers_node *fiber_data;
+    tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+    if (!tgid_data /*|| !current_fiber*/)
+    {
+        pr_crit("Process %d has no fiber context initialized\n", current->tgid);
+        return PTR_ERR(tgid_data);
+    }
+    fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber);
+    if (!fiber_data)
+    {
+        pr_crit("Process %d has no fiber with id %u\n", current->tgid, to_fiber);
+        return -ENOENT;
+    }
+    pr_info("Process %d switch from fiber %u to %u\n", current->tgid,0,0);
+    return 0;
+}
+
+    /** @brief * This function is called whenever a process tries to do an ioctl on our
  *  device file.
  *  @param f A pointer to a file object (defined in linux/fs.h)
  *  @param cmd The command
  *  @param arg The arguments
  */
-static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
+    static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
     switch (cmd)
     {
@@ -233,32 +281,14 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
             }
         }
         for (node = rb_first(data->fibers_root); node; node = rb_next(node))
-            pr_info("fid=%d\n", rb_entry(node, struct fibers_node, node)->fid);
+            pr_info("fid=%d start=%lu\n", rb_entry(node, struct fibers_node, node)->fid, rb_entry(node, struct fibers_node, node)->fiber.start_address);
     }
         break;
     case OPENFIBERS_IOCTL_CREATE_FIBER:
-    {
-        struct fibers_by_tgid_node *tgid_data;
-        struct fibers_node *fiber_data;
-        tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
-        if (!tgid_data)
-        {
-            tgid_data = initialize_fibers_for_current();
-            if (IS_ERR(tgid_data))
-            {
-                pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
-                return PTR_ERR(tgid_data);
-            }
-        }
-        fiber_data = kmalloc(sizeof(struct fibers_node), GFP_KERNEL | __GFP_ZERO);
-        if (!fiber_data)
-            return -ENOMEM;
-        fiber_data->fid = tgid_data->max_fid++;
-        fiber_data->fiber = NULL;
-        return fid_rbtree_insert(tgid_data->fibers_root, fiber_data);
-    }
+        return openfibers_ioctl_create_fiber((unsigned long)arg, 0);
         break;
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
+        return openfibers_ioctl_switch_to_fiber((fid_t) arg);
         break;
     case OPENFIBERS_IOCTL_FLS_ALLOC:
         break;
@@ -293,7 +323,7 @@ static void fibers_tree_cleanup(struct rb_root *root)
         next = rb_next_postorder(next);
 
         rb_erase(&this->node, root);
-        kfree(this->fiber);
+        //kfree(this->fiber);
         kfree(this);
     }
 }
