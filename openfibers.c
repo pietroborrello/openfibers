@@ -21,7 +21,7 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
 struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
-static __thread fiber_t *current_fiber = NULL;
+static /* TODO: __thread - Unknown symbol _GLOBAL_OFFSET_TABLE_ (err 0)*/ fiber_t *current_fiber = NULL; // to know which fiber unset running
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
@@ -229,6 +229,7 @@ static long openfibers_ioctl_create_fiber(unsigned long start_address, unsigned 
     if (!fiber_data)
         return -ENOMEM;
     fiber_data->fid = tgid_data->max_fid++;
+    fiber_data->fiber.fid = fiber_data->fid;
     fiber_data->fiber.running = FALSE;
     fiber_data->fiber.start_address = start_address;
     if(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data))
@@ -236,25 +237,53 @@ static long openfibers_ioctl_create_fiber(unsigned long start_address, unsigned 
     return fiber_data->fid;
 }
 
+// convert to fiber
+static long openfibers_ioctl_convert_to_fiber(void)
+{
+    struct fibers_by_tgid_node *tgid_data;
+    struct fibers_node *new_fiber_data;
+    fid_t fid;
+    long res = openfibers_ioctl_create_fiber(0, 0);
+    if(res < 0)
+        return res;
+    fid = res;
+
+    tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+    if (!tgid_data)
+    {
+        pr_crit("Thread %d conversion to fiber failed\n", current->tgid);
+        return -ENOMEM;
+    }
+    new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid);
+    if (!new_fiber_data)
+    {
+        pr_crit("Thread %d conversion to fiber failed\n", current->tgid);
+        return -ENOMEM;
+    }
+    current_fiber = &new_fiber_data->fiber;
+    return new_fiber_data->fid;
+}
+
 // switch to a new fiber
 static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
 {
     struct fibers_by_tgid_node *tgid_data;
-    struct fibers_node *fiber_data;
+    struct fibers_node *to_fiber_data;
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
-    if (!tgid_data /*|| !current_fiber*/)
+    if (!tgid_data || !current_fiber)
     {
         pr_crit("Process %d has no fiber context initialized\n", current->tgid);
-        return PTR_ERR(tgid_data);
+        return -ENOENT;
     }
-    fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber);
-    if (!fiber_data)
+    to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber);
+    if (!to_fiber_data)
     {
         pr_crit("Process %d has no fiber with id %u\n", current->tgid, to_fiber);
         return -ENOENT;
     }
-    pr_info("Process %d switch from fiber %u to %u\n", current->tgid,0,0);
-    return 0;
+    pr_info("Process %d switching from fiber %u to fiber %u\n", current->tgid, current_fiber->fid, to_fiber);
+    current_fiber = &to_fiber_data->fiber;
+    return to_fiber_data->fid;
 }
 
     /** @brief * This function is called whenever a process tries to do an ioctl on our
@@ -289,6 +318,9 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
         break;
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
         return openfibers_ioctl_switch_to_fiber((fid_t) arg);
+        break;
+    case OPENFIBERS_IOCTL_CONVERT_TO_FIBER:
+        return openfibers_ioctl_convert_to_fiber();
         break;
     case OPENFIBERS_IOCTL_FLS_ALLOC:
         break;

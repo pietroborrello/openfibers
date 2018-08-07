@@ -29,6 +29,7 @@
 typedef pid_t fid_t;
 typedef struct
 {
+    fid_t fid;
     volatile bool running;
     unsigned long start_address;
 } fiber_t;
