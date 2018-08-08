@@ -306,17 +306,40 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
     current_fiber->context.rdx = regs->dx;
     current_fiber->context.rdi = regs->di;
     current_fiber->context.rsi = regs->si;
+    current_fiber->context.r8 = regs->r8;
+    current_fiber->context.r9 = regs->r9;
+    current_fiber->context.r10 = regs->r10;
+    current_fiber->context.r11 = regs->r11;
+    current_fiber->context.r12 = regs->r12;
+    current_fiber->context.r13 = regs->r13;
+    current_fiber->context.r14 = regs->r14;
+    current_fiber->context.r15 = regs->r15;
 
     current_fiber->context.rip = regs->ip;
-    pr_crit("Old stack: 0x%016llx - Old IP: 0x%016llx\n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+    //pr_crit("Old stack: 0x%016llx - Old IP: 0x%016llx\n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
     regs->sp = to_fiber_data->fiber.context.rsp;
     regs->bp = to_fiber_data->fiber.context.rbp;
+    regs->ax = to_fiber_data->fiber.context.rax;
+    regs->bx = to_fiber_data->fiber.context.rbx;
+    regs->cx = to_fiber_data->fiber.context.rcx;
+    regs->dx = to_fiber_data->fiber.context.rdx;
+    regs->di = to_fiber_data->fiber.context.rdi;
+    regs->si = to_fiber_data->fiber.context.rsi;
+    regs->r8 = to_fiber_data->fiber.context.r8;
+    regs->r9 = to_fiber_data->fiber.context.r9;
+    regs->r10 = to_fiber_data->fiber.context.r10;
+    regs->r11 = to_fiber_data->fiber.context.r11;
+    regs->r12 = to_fiber_data->fiber.context.r12;
+    regs->r13 = to_fiber_data->fiber.context.r13;
+    regs->r14 = to_fiber_data->fiber.context.r14;
+    regs->r15 = to_fiber_data->fiber.context.r15;
+
     regs->ip = to_fiber_data->fiber.context.rip;
 
     current_fiber = &to_fiber_data->fiber;
 
-    pr_crit("New stack: 0x%016llx - New IP: 0x%016llx \n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+    //pr_crit("New stack: 0x%016llx - New IP: 0x%016llx \n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
     return to_fiber_data->fid;
 }
