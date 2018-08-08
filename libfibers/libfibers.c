@@ -24,12 +24,15 @@ void openfibers_ioctl_ping(int fd)
 
 int openfibers_ioctl_create_fiber(int fd, unsigned long addr)
 {
+    unsigned long size = STACK_DEFAULT_SIZE;
     struct fiber_request_t request = {
-        .stack_address = (unsigned long)mmap(NULL, STACK_DEFAULT_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) + STACK_DEFAULT_SIZE,
+        .stack_address = (unsigned long)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) + size,
         .start_address = addr,
+        .stack_size = size,
+        .start_parameters = 0,
     };
     int res = ioctl(fd, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
-    if (res == -1)
+    if (res < 0)
     {
         perror("openfibers ioctl fiber create failed");
         return -1;

@@ -371,15 +371,23 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
             pr_info("fid=%d start=%lu\n", rb_entry(node, struct fibers_node, node)->fid, rb_entry(node, struct fibers_node, node)->fiber.start_address);
     }
         break;
+        
     case OPENFIBERS_IOCTL_CREATE_FIBER:
+
+        if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fiber_request_t)))
+            return -EINVAL;
+
         return openfibers_ioctl_create_fiber(((struct fiber_request_t*) arg)->stack_address, ((struct fiber_request_t*)arg)->start_address, 0);
         break;
+
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
-        return openfibers_ioctl_switch_to_fiber((fid_t) arg);
+        return openfibers_ioctl_switch_to_fiber((fid_t)arg);
         break;
+
     case OPENFIBERS_IOCTL_CONVERT_TO_FIBER:
         return openfibers_ioctl_convert_to_fiber();
         break;
+        
     case OPENFIBERS_IOCTL_FLS_ALLOC:
         break;
     case OPENFIBERS_IOCTL_FLS_FREE:
