@@ -211,10 +211,11 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
 }
 
 // create a new fiber
-static long openfibers_ioctl_create_fiber(unsigned long start_address, unsigned long parameter)
+static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned long start_address, unsigned long parameter)
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *fiber_data;
+    struct pt_regs *regs;
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data)
     {
@@ -234,6 +235,13 @@ static long openfibers_ioctl_create_fiber(unsigned long start_address, unsigned 
     fiber_data->fiber.start_address = start_address;
     if(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data))
         return -ENOMEM;
+
+    // HANDLE CREATION
+    regs = task_pt_regs(current);
+
+    fiber_data->fiber.context.rsp = stack_address;
+    fiber_data->fiber.context.rip = start_address;
+    
     return fiber_data->fid;
 }
 
@@ -243,7 +251,9 @@ static long openfibers_ioctl_convert_to_fiber(void)
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *new_fiber_data;
     fid_t fid;
-    long res = openfibers_ioctl_create_fiber(0, 0);
+    //struct pt_regs *regs = task_pt_regs(current);
+
+    long res = openfibers_ioctl_create_fiber(0, 0, 0);
     if(res < 0)
         return res;
     fid = res;
@@ -269,6 +279,8 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *to_fiber_data;
+    struct pt_regs *regs;
+
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data || !current_fiber)
     {
@@ -282,7 +294,30 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
         return -ENOENT;
     }
     pr_info("Process %d switching from fiber %u to fiber %u\n", current->tgid, current_fiber->fid, to_fiber);
+
+    // HANDLE SWITCH
+    regs = task_pt_regs(current);
+
+    current_fiber->context.rsp = regs->sp;
+    current_fiber->context.rbp = regs->bp;
+    current_fiber->context.rax = regs->ax;
+    current_fiber->context.rbx = regs->bx;
+    current_fiber->context.rcx = regs->cx;
+    current_fiber->context.rdx = regs->dx;
+    current_fiber->context.rdi = regs->di;
+    current_fiber->context.rsi = regs->si;
+
+    current_fiber->context.rip = regs->ip;
+    pr_crit("Old stack: 0x%016llx - Old IP: 0x%016llx\n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+
+    regs->sp = to_fiber_data->fiber.context.rsp;
+    regs->bp = to_fiber_data->fiber.context.rbp;
+    regs->ip = to_fiber_data->fiber.context.rip;
+
     current_fiber = &to_fiber_data->fiber;
+
+    pr_crit("New stack: 0x%016llx - New IP: 0x%016llx \n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+
     return to_fiber_data->fid;
 }
 
@@ -314,7 +349,7 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
     }
         break;
     case OPENFIBERS_IOCTL_CREATE_FIBER:
-        return openfibers_ioctl_create_fiber((unsigned long)arg, 0);
+        return openfibers_ioctl_create_fiber(((struct fiber_request_t*) arg)->stack_address, ((struct fiber_request_t*)arg)->start_address, 0);
         break;
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
         return openfibers_ioctl_switch_to_fiber((fid_t) arg);
@@ -356,6 +391,7 @@ static void fibers_tree_cleanup(struct rb_root *root)
 
         rb_erase(&this->node, root);
         //kfree(this->fiber);
+        // TODO: free process stack!
         kfree(this);
     }
 }

@@ -26,29 +26,6 @@
 #define TRUE (1 == 1)
 #endif
 
-typedef pid_t fid_t;
-typedef struct
-{
-    fid_t fid;
-    volatile bool running;
-    unsigned long start_address;
-} fiber_t;
-
-struct fibers_node
-{
-    struct rb_node node;
-    fid_t fid;
-    fiber_t fiber;
-};
-
-struct fibers_by_tgid_node
-{
-    struct rb_node node;
-    pid_t tgid;
-    fid_t max_fid;
-    struct rb_root* fibers_root;
-};
-
 /// This structure is used to maintain execution context for LPs' userspace threads
 typedef struct __exec_context_t
 {
@@ -75,3 +52,33 @@ typedef struct __exec_context_t
     // Space for other registers
     unsigned char others[512] __attribute__((aligned(16))); // fxsave wants 16-byte aligned memory
 } exec_context_t;
+
+typedef pid_t fid_t;
+typedef struct
+{
+    fid_t fid;
+    volatile bool running;
+    unsigned long start_address;
+    exec_context_t context;
+} fiber_t;
+
+struct fibers_node
+{
+    struct rb_node node;
+    fid_t fid;
+    fiber_t fiber;
+};
+
+struct fibers_by_tgid_node
+{
+    struct rb_node node;
+    pid_t tgid;
+    fid_t max_fid;
+    struct rb_root* fibers_root;
+};
+
+struct fiber_request_t
+{
+    unsigned long start_address;
+    unsigned long stack_address;
+};

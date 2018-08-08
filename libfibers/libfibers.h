@@ -11,3 +11,10 @@
 #define OPENFIBERS_IOCTL_FLS_SET _IO(OPENFIBERS_IOCTL_MAGIC, 7)
 #define OPENFIBERS_IOCTL_FLS_GET _IO(OPENFIBERS_IOCTL_MAGIC, 8)
 #define OPENFIBERS_DEVICE_FILE_NAME "/dev/openfibers"
+
+struct fiber_request_t
+{
+    unsigned long start_address;
+    unsigned long stack_address;
+};
+
