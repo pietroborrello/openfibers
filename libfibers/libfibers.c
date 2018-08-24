@@ -80,9 +80,20 @@ void f2()
     {
         sleep(1);
         printf("2\n");
+        openfibers_ioctl_switch_to_fiber(file_desc, 3);
+    }
+}
+
+void f3()
+{
+    while (1)
+    {
+        sleep(1);
+        printf("3\n");
         openfibers_ioctl_switch_to_fiber(file_desc, 1);
     }
 }
+
 int main(int argc, char *argv[])
 {
     int ret_val;
@@ -98,6 +109,7 @@ int main(int argc, char *argv[])
 
     openfibers_ioctl_create_fiber(file_desc, (unsigned long) f1);
     openfibers_ioctl_create_fiber(file_desc, (unsigned long)f2);
+    openfibers_ioctl_create_fiber(file_desc, (unsigned long)f3);
     openfibers_ioctl_ping(file_desc);
 
     openfibers_ioctl_switch_to_fiber(file_desc, 2);

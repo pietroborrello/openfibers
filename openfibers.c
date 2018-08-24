@@ -21,7 +21,7 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
 struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
-static /* TODO: __thread - Unknown symbol _GLOBAL_OFFSET_TABLE_ (err 0)*/ fiber_t *current_fiber = NULL; // to know which fiber unset running
+//static /* TODO: __thread - Unknown symbol _GLOBAL_OFFSET_TABLE_ (err 0)*/ fiber_t *current_fiber = NULL; // to know which fiber unset running
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
@@ -246,7 +246,7 @@ static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned 
 }
 
 // convert to fiber
-static long openfibers_ioctl_convert_to_fiber(void)
+static long openfibers_ioctl_convert_to_fiber(struct file *f)
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *new_fiber_data;
@@ -270,16 +270,17 @@ static long openfibers_ioctl_convert_to_fiber(void)
         pr_crit("Thread %d conversion to fiber failed\n", current->tgid);
         return -ENOMEM;
     }
-    current_fiber = &new_fiber_data->fiber;
+    f->private_data = (void*) &new_fiber_data->fiber; // save current fiber for the thread
     return new_fiber_data->fid;
 }
 
 // switch to a new fiber
-static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
+static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *to_fiber_data;
     struct pt_regs *regs;
+    fiber_t *current_fiber = (fiber_t*) f->private_data;
 
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data || !current_fiber)
@@ -337,7 +338,7 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
 
     regs->ip = to_fiber_data->fiber.context.rip;
 
-    current_fiber = &to_fiber_data->fiber;
+    f->private_data = (void*) &to_fiber_data->fiber;
 
     //pr_crit("New stack: 0x%016llx - New IP: 0x%016llx \n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
@@ -368,7 +369,8 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
             }
         }
         for (node = rb_first(data->fibers_root); node; node = rb_next(node))
-            pr_info("fid=%d start=%lu\n", rb_entry(node, struct fibers_node, node)->fid, rb_entry(node, struct fibers_node, node)->fiber.start_address);
+            pr_info("fid=%d start=0x%lx\n", rb_entry(node, struct fibers_node, node)->fid, rb_entry(node, struct fibers_node, node)->fiber.start_address);
+        
     }
         break;
         
@@ -377,15 +379,15 @@ static long openfibers_ioctl_switch_to_fiber(fid_t to_fiber)
         if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fiber_request_t)))
             return -EINVAL;
 
-        return openfibers_ioctl_create_fiber(((struct fiber_request_t*) arg)->stack_address, ((struct fiber_request_t*)arg)->start_address, 0);
+        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, 0);
         break;
 
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
-        return openfibers_ioctl_switch_to_fiber((fid_t)arg);
+        return openfibers_ioctl_switch_to_fiber(f, (fid_t) arg);
         break;
 
     case OPENFIBERS_IOCTL_CONVERT_TO_FIBER:
-        return openfibers_ioctl_convert_to_fiber();
+        return openfibers_ioctl_convert_to_fiber(f);
         break;
         
     case OPENFIBERS_IOCTL_FLS_ALLOC:

@@ -10,9 +10,9 @@
 #define OPENFIBERS_IOCTL_SWITCH_TO_FIBER _IOW(OPENFIBERS_IOCTL_MAGIC, 3, unsigned long)
 #define OPENFIBERS_IOCTL_CONVERT_TO_FIBER _IO(OPENFIBERS_IOCTL_MAGIC, 4)
 #define OPENFIBERS_IOCTL_FLS_ALLOC _IO(OPENFIBERS_IOCTL_MAGIC, 5)
-#define OPENFIBERS_IOCTL_FLS_FREE _IO(OPENFIBERS_IOCTL_MAGIC, 6)
-#define OPENFIBERS_IOCTL_FLS_SET _IO(OPENFIBERS_IOCTL_MAGIC, 7)
-#define OPENFIBERS_IOCTL_FLS_GET _IO(OPENFIBERS_IOCTL_MAGIC, 8)
+#define OPENFIBERS_IOCTL_FLS_FREE _IOW(OPENFIBERS_IOCTL_MAGIC, 6, unsigned long)
+#define OPENFIBERS_IOCTL_FLS_SET _IOW(OPENFIBERS_IOCTL_MAGIC, 7, unsigned long)
+#define OPENFIBERS_IOCTL_FLS_GET _IOW(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
 
 #endif
 
@@ -60,6 +60,8 @@ typedef struct
     volatile bool running;
     unsigned long start_address;
     exec_context_t context;
+    unsigned long idx;
+    unsigned long fls[4096];
 } fiber_t;
 
 struct fibers_node
