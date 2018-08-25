@@ -1,6 +1,16 @@
 #ifndef OPENFIBERS_IOCTL_H
 #define OPENFIBERS_IOCTL_H
 
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/init.h>
+
+#include <linux/device.h>  // Header to support the kernel Driver Model
+#include <linux/kernel.h>  // Contains types, macros, functions for the kernel
+#include <linux/fs.h>      // Header for the Linux file system support
+#include <linux/uaccess.h> // Required for the copy to user function
+#include <linux/kprobes.h> // Required for kprobe
+
 #include <linux/ioctl.h>
 
 #define OPENFIBERS_IOCTL_MAGIC 'o'
@@ -18,6 +28,7 @@
 
 #include <linux/rbtree.h>
 #include <linux/slab.h>
+#include <linux/atomic.h>
 
 #ifndef FALSE
 #define FALSE (1 == 0)
@@ -57,7 +68,7 @@ typedef pid_t fid_t;
 typedef struct
 {
     fid_t fid;
-    volatile bool running;
+    atomic_t running;
     unsigned long start_address;
     exec_context_t context;
     unsigned long idx;
@@ -75,7 +86,7 @@ struct fibers_by_tgid_node
 {
     struct rb_node node;
     pid_t tgid;
-    fid_t max_fid;
+    atomic_t max_fid;
     struct rb_root* fibers_root;
 };
 

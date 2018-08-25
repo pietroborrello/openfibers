@@ -12,6 +12,7 @@
 #define OPENFIBERS_IOCTL_FLS_GET _IOW(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
 #define OPENFIBERS_DEVICE_FILE_NAME "/dev/openfibers"
 
+typedef pid_t fid_t;
 struct fiber_request_t
 {
     unsigned long start_address;

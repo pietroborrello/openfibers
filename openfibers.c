@@ -1,15 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/module.h>
-#include <linux/moduleparam.h>
-#include <linux/init.h>
-
-#include <linux/device.h>     // Header to support the kernel Driver Model
-#include <linux/kernel.h>     // Contains types, macros, functions for the kernel
-#include <linux/fs.h>         // Header for the Linux file system support
-#include <linux/uaccess.h>    // Required for the copy to user function
-#include <linux/kprobes.h>    // Required for kprobe
-
 #define DEVICE_NAME "openfibers" ///< The device will appear at /dev/... using this value
 #define CLASS_NAME "openfibers"      ///< The device class -- this is a character device driver
 
@@ -181,6 +171,7 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
 {
     int ret;
     struct fibers_by_tgid_node *data;
+    atomic_t tmp = ATOMIC_INIT(0);
 
     pr_info("initializing fibers for: %d\n", current->tgid);
 
@@ -191,7 +182,7 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
         return ERR_PTR(-ENOMEM);
     }
     data->tgid = current->tgid;
-    data->max_fid = 0;
+    data->max_fid = tmp;
     // allocate the root for fibers for current process when inserting new node by tgid
     data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
     if (!data->fibers_root)
@@ -211,11 +202,13 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
 }
 
 // create a new fiber
-static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned long start_address, unsigned long parameter)
+static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned long start_address, unsigned long parameter, unsigned int _is_running)
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *fiber_data;
     struct pt_regs *regs;
+    atomic_t is_running = ATOMIC_INIT(_is_running);
+
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data)
     {
@@ -229,9 +222,9 @@ static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned 
     fiber_data = kmalloc(sizeof(struct fibers_node), GFP_KERNEL | __GFP_ZERO);
     if (!fiber_data)
         return -ENOMEM;
-    fiber_data->fid = tgid_data->max_fid++;
+    fiber_data->fid = atomic_inc_return(&tgid_data->max_fid);
     fiber_data->fiber.fid = fiber_data->fid;
-    fiber_data->fiber.running = FALSE;
+    fiber_data->fiber.running = is_running;
     fiber_data->fiber.start_address = start_address;
     if(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data))
         return -ENOMEM;
@@ -253,7 +246,7 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
     fid_t fid;
     //struct pt_regs *regs = task_pt_regs(current);
 
-    long res = openfibers_ioctl_create_fiber(0, 0, 0);
+    long res = openfibers_ioctl_create_fiber(0, 0, 0, 1);
     if(res < 0)
         return res;
     fid = res;
@@ -261,13 +254,13 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data)
     {
-        pr_crit("Thread %d conversion to fiber failed\n", current->tgid);
+        pr_crit("Thread %d conversion to fiber failed\n", current->pid);
         return -ENOMEM;
     }
     new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid);
     if (!new_fiber_data)
     {
-        pr_crit("Thread %d conversion to fiber failed\n", current->tgid);
+        pr_crit("Thread %d conversion to fiber failed\n", current->pid);
         return -ENOMEM;
     }
     f->private_data = (void*) &new_fiber_data->fiber; // save current fiber for the thread
@@ -285,16 +278,24 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data || !current_fiber)
     {
-        pr_crit("Process %d has no fiber context initialized\n", current->tgid);
+        pr_crit("Process group %d has no fiber context initialized\n", current->tgid);
         return -ENOENT;
     }
     to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber);
     if (!to_fiber_data)
     {
-        pr_crit("Process %d has no fiber with id %u\n", current->tgid, to_fiber);
+        pr_crit("Process group %d has no fiber with id %u\n", current->tgid, to_fiber);
         return -ENOENT;
     }
-    pr_info("Process %d switching from fiber %u to fiber %u\n", current->tgid, current_fiber->fid, to_fiber);
+
+    
+    if (atomic_cmpxchg(&to_fiber_data->fiber.running, 0, 1)) // not succeded
+    {
+        pr_info("Thread %d switching failed from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
+        return -EBUSY;
+    }
+
+    pr_info("Thread %d switching from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
 
     // HANDLE SWITCH
     regs = task_pt_regs(current);
@@ -339,6 +340,8 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     regs->ip = to_fiber_data->fiber.context.rip;
 
     f->private_data = (void*) &to_fiber_data->fiber;
+    //leave previous fiber not running anymore
+    atomic_set(&current_fiber->running, 0);
 
     //pr_crit("New stack: 0x%016llx - New IP: 0x%016llx \n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
@@ -379,7 +382,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
         if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fiber_request_t)))
             return -EINVAL;
 
-        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, 0);
+        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, 0, 0);
         break;
 
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:
