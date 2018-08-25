@@ -12,6 +12,8 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
 //static /* TODO: __thread - Unknown symbol _GLOBAL_OFFSET_TABLE_ (err 0)*/ fiber_t *current_fiber = NULL; // to know which fiber unset running
+static rwlock_t fibers_by_tgid_tree_rwlock = __RW_LOCK_UNLOCKED(fibers_by_tgid_tree_rwlock);
+unsigned long fibers_by_tgid_tree_rwlock_flags;
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
@@ -30,7 +32,9 @@ static struct kprobe kp;
 
 struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
 {
-    struct rb_node *node = root->rb_node;
+    struct rb_node *node;
+    read_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    node = root->rb_node;
 
     while (node)
     {
@@ -44,14 +48,20 @@ struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
         else if (result > 0)
             node = node->rb_right;
         else
-            return data;
+            {
+                read_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+                return data;
+            }
     }
+    read_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
     return NULL;
 }
 
-struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid)
+struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, rwlock_t fibers_root_rwlock, unsigned long fibers_root_rwlock_flags)
 {
-    struct rb_node *node = root->rb_node;
+    struct rb_node *node;
+    read_lock_irqsave(&fibers_root_rwlock, fibers_root_rwlock_flags);
+    node = root->rb_node;
 
     while (node)
     {
@@ -65,14 +75,21 @@ struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid)
         else if (result > 0)
             node = node->rb_right;
         else
+        {
+            read_unlock_irqrestore(&fibers_root_rwlock, fibers_root_rwlock_flags);
             return data;
+        }
     }
+    read_unlock_irqrestore(&fibers_root_rwlock, fibers_root_rwlock_flags);
     return NULL;
 }
 
 int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
 {
-    struct rb_node **new = &(root->rb_node), *parent = NULL;
+    struct rb_node **new, *parent;
+    write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    new = &(root->rb_node);
+    parent = NULL;
 
     /* Figure out where to put new node */
     while (*new)
@@ -85,18 +102,25 @@ int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
         else if (result > 0)
             new = &((*new)->rb_right);
         else
+            {
+            write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
             return FALSE;
+            }
     }
 
     /* Add new node and rebalance tree. */
     rb_link_node(&data->node, parent, new);
     rb_insert_color(&data->node, root);
+    write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
     return TRUE;
 }
 
-int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data)
+int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, rwlock_t fibers_root_rwlock, unsigned long fibers_root_rwlock_flags)
 {
-    struct rb_node **new = &(root->rb_node), *parent = NULL;
+    struct rb_node **new, *parent;
+    write_lock_irqsave(&fibers_root_rwlock, fibers_root_rwlock_flags);
+    new = &(root->rb_node);
+    parent = NULL;
 
     /* Figure out where to put new node */
     while (*new)
@@ -109,13 +133,16 @@ int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data)
         else if (result > 0)
             new = &((*new)->rb_right);
         else
+        {
+            write_unlock_irqrestore(&fibers_root_rwlock, fibers_root_rwlock_flags);
             return FALSE;
+        }
     }
 
     /* Add new node and rebalance tree. */
     rb_link_node(&data->node, parent, new);
     rb_insert_color(&data->node, root);
-
+    write_unlock_irqrestore(&fibers_root_rwlock, fibers_root_rwlock_flags);
     return TRUE;
 }
 
@@ -186,16 +213,23 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
     // allocate the root for fibers for current process when inserting new node by tgid
     data->fibers_root = kmalloc(sizeof(struct rb_root), GFP_KERNEL | __GFP_ZERO);
     if (!data->fibers_root)
-        return FALSE;
+    {
+        pr_crit("memory allocation failed\n");
+        kfree(data);
+        return ERR_PTR(-ENOMEM);
+    }
 
-    // start with empty tree
-    data->fibers_root->rb_node = NULL;
+    // start with empty unlocked tree
+    *data->fibers_root = RB_ROOT;
+    rwlock_init(&data->fibers_root_rwlock);
 
     ret = tgid_rbtree_insert(&fibers_by_tgid_tree, data);
     if (!ret)
         {
-            pr_crit("insertion in fibers by tgid failed\n");
-            return ERR_PTR(-EEXIST);
+            pr_crit("tgid already inserted in fibers_by_tgid\n");
+            kfree(data->fibers_root);
+            kfree(data);
+            return tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
         }
 
     return data;
@@ -226,7 +260,7 @@ static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned 
     fiber_data->fiber.fid = fiber_data->fid;
     fiber_data->fiber.running = is_running;
     fiber_data->fiber.start_address = start_address;
-    if(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data))
+    if (!fid_rbtree_insert(tgid_data->fibers_root, fiber_data, tgid_data->fibers_root_rwlock, tgid_data->fibers_root_rwlock_flags))
         return -ENOMEM;
 
     // HANDLE CREATION
@@ -234,7 +268,8 @@ static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned 
 
     fiber_data->fiber.context.rsp = stack_address;
     fiber_data->fiber.context.rip = start_address;
-    
+    fiber_data->fiber.context.rdi = parameter;
+
     return fiber_data->fid;
 }
 
@@ -257,7 +292,7 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
         pr_crit("Thread %d conversion to fiber failed\n", current->pid);
         return -ENOMEM;
     }
-    new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid);
+    new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, tgid_data->fibers_root_rwlock, tgid_data->fibers_root_rwlock_flags);
     if (!new_fiber_data)
     {
         pr_crit("Thread %d conversion to fiber failed\n", current->pid);
@@ -281,7 +316,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
         pr_crit("Process group %d has no fiber context initialized\n", current->tgid);
         return -ENOENT;
     }
-    to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber);
+    to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber, tgid_data->fibers_root_rwlock, tgid_data->fibers_root_rwlock_flags);
     if (!to_fiber_data)
     {
         pr_crit("Process group %d has no fiber with id %u\n", current->tgid, to_fiber);
@@ -382,7 +417,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
         if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fiber_request_t)))
             return -EINVAL;
 
-        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, 0, 0);
+        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, ((struct fiber_request_t *)arg)->start_parameters, 0);
         break;
 
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:

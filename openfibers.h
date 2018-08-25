@@ -87,6 +87,8 @@ struct fibers_by_tgid_node
     struct rb_node node;
     pid_t tgid;
     atomic_t max_fid;
+    rwlock_t fibers_root_rwlock;
+    unsigned long fibers_root_rwlock_flags;
     struct rb_root* fibers_root;
 };
 

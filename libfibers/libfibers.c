@@ -11,7 +11,7 @@
 
 #define STACK_DEFAULT_SIZE 4096
 
-int file_desc;
+__thread int openfiber_local_file_desc;
 #define NUM_FIBERS 3
 static fid_t fibers[NUM_FIBERS];
 
@@ -25,7 +25,7 @@ void openfibers_ioctl_ping(int fd)
     printf("openfibers ping done\n");
 }
 
-int openfibers_ioctl_create_fiber(int fd, unsigned long addr)
+int openfibers_ioctl_create_fiber(unsigned long addr)
 {
     unsigned long size = STACK_DEFAULT_SIZE;
     struct fiber_request_t request = {
@@ -34,7 +34,7 @@ int openfibers_ioctl_create_fiber(int fd, unsigned long addr)
         .stack_size = size,
         .start_parameters = 0,
     };
-    int res = ioctl(fd, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
+    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
     if (res < 0)
     {
         perror("openfibers ioctl fiber create failed");
@@ -44,9 +44,9 @@ int openfibers_ioctl_create_fiber(int fd, unsigned long addr)
     return res;
 }
 
-int openfibers_ioctl_switch_to_fiber(int fd, fid_t fid)
+int openfibers_ioctl_switch_to_fiber(fid_t fid)
 {
-    int res = ioctl(fd, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
     if (res < 0)
     {
         perror("openfibers ioctl fiber switch failed");
@@ -55,9 +55,16 @@ int openfibers_ioctl_switch_to_fiber(int fd, fid_t fid)
     return res;
 }
 
-int openfibers_ioctl_convert_to_fiber(int fd)
+int openfibers_ioctl_convert_to_fiber(void)
 {
-    int res = ioctl(fd, OPENFIBERS_IOCTL_CONVERT_TO_FIBER);
+    openfiber_local_file_desc = open(OPENFIBERS_DEVICE_FILE_NAME, 0);
+    if (openfiber_local_file_desc < 0)
+    {
+        perror("Can't open openfibers device file");
+        return -1;
+    }
+
+    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CONVERT_TO_FIBER);
     if (res < 0)
     {
         perror("openfibers ioctl fiber switch failed");
@@ -67,13 +74,23 @@ int openfibers_ioctl_convert_to_fiber(int fd)
     return res;
 }
 
-void f1()
+void f0()
 {
     while(1)
     {
-        printf("tid %d in 1 switching to 2\n", tid);
-        sleep(1);
-        openfibers_ioctl_switch_to_fiber(file_desc, fibers[1]);
+        printf("tid %d in %d switching to %d\n", tid, fibers[0], fibers[1]);
+        sleep(0.1);
+        openfibers_ioctl_switch_to_fiber(fibers[1]);
+    }
+}
+
+void f1()
+{
+    while (1)
+    {
+        printf("tid %d in %d switching to %d\n", tid, fibers[1], fibers[2]);
+        sleep(0.1);
+        openfibers_ioctl_switch_to_fiber(fibers[2]);
     }
 }
 
@@ -81,19 +98,9 @@ void f2()
 {
     while (1)
     {
-        printf("tid %d in 2 switching to 3\n", tid);
-        sleep(1);
-        openfibers_ioctl_switch_to_fiber(file_desc, fibers[2]);
-    }
-}
-
-void f3()
-{
-    while (1)
-    {
-        printf("tid %d in 3 switching to 1\n", tid);
-        sleep(1);
-        openfibers_ioctl_switch_to_fiber(file_desc, fibers[0]);
+        printf("tid %d in %d switching to %d\n", tid, fibers[2], fibers[0]);
+        sleep(0.1);
+        openfibers_ioctl_switch_to_fiber(fibers[0]);
     }
 }
 
@@ -105,14 +112,14 @@ static void *thread_initialization(void *args)
     unsigned int f;
     (void)args;
 
-    fid_t fid = openfibers_ioctl_convert_to_fiber(file_desc);
+    fid_t fid = openfibers_ioctl_convert_to_fiber();
 
     while (!init_complete)
         ;
     while (true)
     {
         printf("%d: while switching to %d\n", tid, fibers[2]);
-        openfibers_ioctl_switch_to_fiber(file_desc, fibers[2]);
+        openfibers_ioctl_switch_to_fiber(fibers[2]);
     }
 }
 
@@ -120,25 +127,18 @@ int main(int argc, char *argv[])
 {
     int ret_val;
 
-    file_desc = open(OPENFIBERS_DEVICE_FILE_NAME, 0);
-    if (file_desc < 0)
-    {
-        perror("Can't open openfibers device file");
-        return -1;
-    }
-
     create_threads(2, thread_initialization, NULL);
 
-    fid_t f = openfibers_ioctl_convert_to_fiber(file_desc);
+    fid_t f = openfibers_ioctl_convert_to_fiber();
 
-    fibers[0] = openfibers_ioctl_create_fiber(file_desc, (unsigned long) f1);
-    fibers[1] = openfibers_ioctl_create_fiber(file_desc, (unsigned long)f2);
-    fibers[2] = openfibers_ioctl_create_fiber(file_desc, (unsigned long)f3);
-    //openfibers_ioctl_ping(file_desc);
+    fibers[0] = openfibers_ioctl_create_fiber((unsigned long) f0);
+    fibers[1] = openfibers_ioctl_create_fiber((unsigned long) f1);
+    fibers[2] = openfibers_ioctl_create_fiber((unsigned long) f2);
+    //openfibers_ioctl_ping(openfiber_local_file_desc);
 
     init_complete = true;
 
-    sleep(10);
-    close(file_desc);
+    sleep(3);
+    close(openfiber_local_file_desc);
     return 0;
 }
