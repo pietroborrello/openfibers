@@ -37,8 +37,8 @@
 #define TRUE (1 == 1)
 #endif
 
-/// This structure is used to maintain execution context for LPs' userspace threads
-typedef struct __exec_context_t
+    /// This structure is used to maintain execution context for LPs' userspace threads
+    typedef struct __exec_context_t
 {
     // This is the space for general purpose registers
     unsigned long long rax;
@@ -69,7 +69,7 @@ typedef struct
 {
     fid_t fid;
     atomic_t running;
-    unsigned long start_address;
+    void (*start_address)(void *);
     exec_context_t context;
     unsigned long idx;
     unsigned long fls[4096];
@@ -94,8 +94,8 @@ struct fibers_by_tgid_node
 
 struct fiber_request_t
 {
-    unsigned long start_address;
-    unsigned long start_parameters;
-    unsigned long stack_address;
+    void (*start_address)(void *);
+    void* start_args;
+    void* stack_address;
     unsigned long stack_size;
 };

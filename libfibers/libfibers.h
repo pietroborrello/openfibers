@@ -15,9 +15,9 @@
 typedef pid_t fid_t;
 struct fiber_request_t
 {
-    unsigned long start_address;
-    unsigned long start_parameters;
-    unsigned long stack_address;
+    void (*start_address)(void *);
+    void *start_args;
+    void *stack_address;
     unsigned long stack_size;
 };
 

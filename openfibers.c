@@ -236,12 +236,10 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
 }
 
 // create a new fiber
-static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned long start_address, unsigned long parameter, unsigned int _is_running)
+static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_address)(void *), void *args, unsigned int is_running)
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *fiber_data;
-    struct pt_regs *regs;
-    atomic_t is_running = ATOMIC_INIT(_is_running);
 
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data)
@@ -258,17 +256,15 @@ static long openfibers_ioctl_create_fiber(unsigned long stack_address, unsigned 
         return -ENOMEM;
     fiber_data->fid = atomic_inc_return(&tgid_data->max_fid);
     fiber_data->fiber.fid = fiber_data->fid;
-    fiber_data->fiber.running = is_running;
+    atomic_set(&fiber_data->fiber.running, is_running);
     fiber_data->fiber.start_address = start_address;
+
+    fiber_data->fiber.context.rsp = (unsigned long)stack_address;
+    fiber_data->fiber.context.rip = (unsigned long)start_address;
+    fiber_data->fiber.context.rdi = (unsigned long)args;
+
     if (!fid_rbtree_insert(tgid_data->fibers_root, fiber_data, tgid_data->fibers_root_rwlock, tgid_data->fibers_root_rwlock_flags))
         return -ENOMEM;
-
-    // HANDLE CREATION
-    regs = task_pt_regs(current);
-
-    fiber_data->fiber.context.rsp = stack_address;
-    fiber_data->fiber.context.rip = start_address;
-    fiber_data->fiber.context.rdi = parameter;
 
     return fiber_data->fid;
 }
@@ -351,9 +347,12 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     current_fiber->context.r13 = regs->r13;
     current_fiber->context.r14 = regs->r14;
     current_fiber->context.r15 = regs->r15;
-
+    current_fiber->context.flags = regs->flags;
     current_fiber->context.rip = regs->ip;
-    //pr_crit("Old stack: 0x%016llx - Old IP: 0x%016llx\n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+    asm volatile("fxsave %0"
+                 : "+m"(current_fiber->context.others));
+
+    pr_info("Thread %d - Old stack: 0x%llx (ret: 0x%llx) - Old IP: 0x%llx\n", current->pid, (long long unsigned int)regs->sp, *(long long unsigned int*)regs->sp, (long long unsigned int)regs->ip);
 
     regs->sp = to_fiber_data->fiber.context.rsp;
     regs->bp = to_fiber_data->fiber.context.rbp;
@@ -371,14 +370,16 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     regs->r13 = to_fiber_data->fiber.context.r13;
     regs->r14 = to_fiber_data->fiber.context.r14;
     regs->r15 = to_fiber_data->fiber.context.r15;
-
+    regs->flags = to_fiber_data->fiber.context.flags;
     regs->ip = to_fiber_data->fiber.context.rip;
+    asm volatile("fxrstor %0"
+                 : "+m"(to_fiber_data->fiber.context.others));
 
     f->private_data = (void*) &to_fiber_data->fiber;
     //leave previous fiber not running anymore
     atomic_set(&current_fiber->running, 0);
 
-    //pr_crit("New stack: 0x%016llx - New IP: 0x%016llx \n", (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+    pr_info("Thread %d - New stack: 0x%llx (ret: 0x%llx) - New IP: 0x%llx \n", current->pid, (long long unsigned int)regs->sp, *(long long unsigned int *)regs->sp, (long long unsigned int)regs->ip);
 
     return to_fiber_data->fid;
 }
@@ -407,9 +408,8 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
             }
         }
         for (node = rb_first(data->fibers_root); node; node = rb_next(node))
-            pr_info("fid=%d start=0x%lx\n", rb_entry(node, struct fibers_node, node)->fid, rb_entry(node, struct fibers_node, node)->fiber.start_address);
-        
-    }
+            pr_info("fid=%d start=0x%lx\n", rb_entry(node, struct fibers_node, node)->fid, (long unsigned int)rb_entry(node, struct fibers_node, node)->fiber.start_address);
+        }
         break;
         
     case OPENFIBERS_IOCTL_CREATE_FIBER:
@@ -417,7 +417,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
         if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fiber_request_t)))
             return -EINVAL;
 
-        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, ((struct fiber_request_t *)arg)->start_parameters, 0);
+        return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, ((struct fiber_request_t *)arg)->start_args, 0);
         break;
 
     case OPENFIBERS_IOCTL_SWITCH_TO_FIBER:

@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <time.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -9,10 +11,10 @@
 #include "thread.h"
 #include "libfibers.h"
 
-#define STACK_DEFAULT_SIZE 4096
+#define STACK_DEFAULT_SIZE 8192
 
 __thread int openfiber_local_file_desc;
-#define NUM_FIBERS 3
+#define NUM_FIBERS 30
 static fid_t fibers[NUM_FIBERS];
 
 void openfibers_ioctl_ping(int fd)
@@ -25,14 +27,14 @@ void openfibers_ioctl_ping(int fd)
     printf("openfibers ping done\n");
 }
 
-int openfibers_ioctl_create_fiber(unsigned long addr)
+int openfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
 {
     unsigned long size = STACK_DEFAULT_SIZE;
     struct fiber_request_t request = {
-        .stack_address = (unsigned long)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) + size,
+        .stack_address = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) + size - 0x8,
         .start_address = addr,
         .stack_size = size,
-        .start_parameters = 0,
+        .start_args = args,
     };
     int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
     if (res < 0)
@@ -49,7 +51,8 @@ int openfibers_ioctl_switch_to_fiber(fid_t fid)
     int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
     if (res < 0)
     {
-        perror("openfibers ioctl fiber switch failed");
+        printf("openfibers ioctl fiber switch tid %d to %d failed\n", tid, fid);
+        perror("");
         return -1;
     }
     return res;
@@ -67,7 +70,7 @@ int openfibers_ioctl_convert_to_fiber(void)
     int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CONVERT_TO_FIBER);
     if (res < 0)
     {
-        perror("openfibers ioctl fiber switch failed");
+        perror("openfibers ioctl fiber conversion failed");
         return -1;
     }
     printf("openfibers fiber %d conversion done\n", res);
@@ -104,6 +107,25 @@ void f2()
     }
 }
 
+// Pick fibers randomly. This might return a fiber which is
+// currently scheduled on another thread.
+static int get_random_fiber(void)
+{
+    return random() % NUM_FIBERS;
+}
+
+void dummy_f(void* arg)
+{
+    unsigned int f;
+    while (1)
+    {
+        f = get_random_fiber();
+        printf("tid %d in %d switching to %d\n", tid, fibers[(unsigned long)arg], fibers[f]);
+        sleep(0.5);
+        openfibers_ioctl_switch_to_fiber(fibers[f]);
+    }
+}
+
 static volatile bool init_complete;
 // This function lives in an "abandoned" fiber: no-one will ever
 // get back here!
@@ -116,25 +138,43 @@ static void *thread_initialization(void *args)
 
     while (!init_complete)
         ;
+
     while (true)
     {
-        printf("%d: while switching to %d\n", tid, fibers[2]);
-        openfibers_ioctl_switch_to_fiber(fibers[2]);
+        f = get_random_fiber();
+        printf("WARNING thread %d: while switching to %d\n", tid, f);
+        openfibers_ioctl_switch_to_fiber(fibers[f]);
     }
 }
 
 int main(int argc, char *argv[])
 {
     int ret_val;
+    unsigned long i;
 
-    create_threads(2, thread_initialization, NULL);
+    // Check if the number of fibers has been passed
+    if (argc < 2)
+    {
+        fprintf(stderr, "Usage: %s <num_threads>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize pseudorandom generator
+    srandom(time(0));
 
     fid_t f = openfibers_ioctl_convert_to_fiber();
 
-    fibers[0] = openfibers_ioctl_create_fiber((unsigned long) f0);
+    /*fibers[0] = openfibers_ioctl_create_fiber((unsigned long) f0);
     fibers[1] = openfibers_ioctl_create_fiber((unsigned long) f1);
-    fibers[2] = openfibers_ioctl_create_fiber((unsigned long) f2);
+    fibers[2] = openfibers_ioctl_create_fiber((unsigned long) f2);*/
     //openfibers_ioctl_ping(openfiber_local_file_desc);
+
+    for (i = 0; i < NUM_FIBERS; i++)
+    {
+        fibers[i] = openfibers_ioctl_create_fiber(dummy_f, (void*)i);
+    }
+    sleep(1);
+    create_threads(atoi(argv[1]), thread_initialization, NULL);
 
     init_complete = true;
 
