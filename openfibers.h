@@ -41,6 +41,7 @@
     typedef struct __exec_context_t
 {
     // This is the space for general purpose registers
+    unsigned long long orig_rax;
     unsigned long long rax;
     unsigned long long rdx;
     unsigned long long rcx;

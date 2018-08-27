@@ -333,6 +333,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
 
     current_fiber->context.rsp = regs->sp;
     current_fiber->context.rbp = regs->bp;
+    current_fiber->context.orig_rax = regs->orig_ax;
     current_fiber->context.rax = regs->ax;
     current_fiber->context.rbx = regs->bx;
     current_fiber->context.rcx = regs->cx;
@@ -352,10 +353,11 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     asm volatile("fxsave %0"
                  : "+m"(current_fiber->context.others));
 
-    pr_info("Thread %d - Old stack: 0x%llx (ret: 0x%llx) - Old IP: 0x%llx\n", current->pid, (long long unsigned int)regs->sp, *(long long unsigned int*)regs->sp, (long long unsigned int)regs->ip);
+    pr_info("Thread %d - Old stack: 0x%llx - Old IP: 0x%llx\n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
     regs->sp = to_fiber_data->fiber.context.rsp;
     regs->bp = to_fiber_data->fiber.context.rbp;
+    regs->orig_ax = to_fiber_data->fiber.context.orig_rax;
     regs->ax = to_fiber_data->fiber.context.rax;
     regs->bx = to_fiber_data->fiber.context.rbx;
     regs->cx = to_fiber_data->fiber.context.rcx;
@@ -379,7 +381,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     //leave previous fiber not running anymore
     atomic_set(&current_fiber->running, 0);
 
-    pr_info("Thread %d - New stack: 0x%llx (ret: 0x%llx) - New IP: 0x%llx \n", current->pid, (long long unsigned int)regs->sp, *(long long unsigned int *)regs->sp, (long long unsigned int)regs->ip);
+    pr_info("Thread %d - New stack: 0x%llx - New IP: 0x%llx \n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
     return to_fiber_data->fid;
 }
@@ -469,7 +471,9 @@ static void fibers_tree_cleanup(struct rb_root *root)
 
 static void tgid_fibers_tree_cleanup(struct rb_root *root)
 {
-    struct rb_node *next = rb_first_postorder(root);
+    struct rb_node *next;
+    write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    next = rb_first_postorder(root);
 
     // postorder visit to free all tree
     while (next)
@@ -482,22 +486,29 @@ static void tgid_fibers_tree_cleanup(struct rb_root *root)
         kfree(this->fibers_root);
         kfree(this);
     }
+    write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    // TODO: handle deletion, not to block others
 }
 
 // kprobe called function
 static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
 {
     //pr_info("exiting: %d\n", current->pid);
-    struct fibers_by_tgid_node *data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+    struct fibers_by_tgid_node *data;
+    data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
 
     if (data){
+        write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+        write_lock_irqsave(&data->fibers_root_rwlock, data->fibers_root_rwlock_flags);
+        // // TODO: when lock and unlock?
         pr_info("cleanup: %d\n", data->tgid);
         rb_erase(&data->node, &fibers_by_tgid_tree);
         fibers_tree_cleanup(data->fibers_root);
         kfree(data->fibers_root);
+        write_unlock_irqrestore(&data->fibers_root_rwlock, data->fibers_root_rwlock_flags);
+        write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
         kfree(data);
     }
-
     return 0;
 }
 
