@@ -13,52 +13,52 @@
 
 #define STACK_DEFAULT_SIZE 8192
 
-__thread int openfiber_local_file_desc;
+__thread int libfibers_local_file_desc;
 #define NUM_FIBERS 30
 static fid_t fibers[NUM_FIBERS];
 
 // Simplistic allocation for FLS
-long openfibers_ioctl_fls_alloc(void)
+long libfibers_ioctl_fls_alloc(void)
 {
-    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_ALLOC);
+    int res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_FLS_ALLOC);
     return res;
 }
 
 // Get a FLS value
-long openfibers_ioctl_fls_get(long idx)
+long libfibers_ioctl_fls_get(long idx)
 {
-    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_GET, idx);
+    int res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_FLS_GET, idx);
     return res;
 }
 
 // Dummy: we don't actually free FLS here...
-bool openfibers_ioctl_fls_free(long idx)
+bool libfibers_ioctl_fls_free(long idx)
 {
-    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_FREE, idx);
+    int res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_FLS_FREE, idx);
     return res;
 }
 
 // Store a value in FLS storage
-void openfibers_ioctl_fls_set(long idx, long value)
+void libfibers_ioctl_fls_set(long idx, long value)
 {
     struct fls_request_t request = {
         .idx = idx,
         .value = value,
     };
-    ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_SET, (unsigned long)&request);
+    ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_FLS_SET, (unsigned long)&request);
 }
 
-void openfibers_ioctl_ping(int fd)
+void libfibers_ioctl_ping(int fd)
 {
     if (ioctl(fd, OPENFIBERS_IOCTL_PING) == -1)
     {
-        printf("openfibers ioctl ping failed");
+        printf("libfibers ioctl ping failed");
         return;
     }
-    printf("openfibers ping done\n");
+    printf("libfibers ping done\n");
 }
 
-int openfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
+int libfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
 {
     unsigned long size = STACK_DEFAULT_SIZE;
     struct fiber_request_t request = {
@@ -67,53 +67,53 @@ int openfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
         .stack_size = size,
         .start_args = args,
     };
-    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
+    int res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
     if (res < 0)
     {
-        printf("openfibers ioctl fiber create failed");
+        printf("libfibers ioctl fiber create failed");
         return -1;
     }
-    printf("openfibers fiber %d create done\n", res);
+    printf("libfibers fiber %d create done\n", res);
     return res;
 }
 
-int openfibers_ioctl_switch_to_fiber(fid_t fid)
+int libfibers_ioctl_switch_to_fiber(fid_t fid)
 {
     // tell gcc you will clobber them, so let him save and restore them for us during fiber switches
     asm volatile(
         "\n\t" ::
             : "%rbp", "%rbx", "%r12", "%r13", "%r14", "%r15");
-    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    int res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
     
     if (res < 0)
     {
-        printf("openfibers ioctl fiber switch tid %d to %d failed\n", tid, fid);
+        printf("libfibers ioctl fiber switch tid %d to %d failed\n", tid, fid);
         //printf("");
         return -1;
     }
     return res;
 }
 
-int openfibers_ioctl_convert_to_fiber(void)
+int libfibers_ioctl_convert_to_fiber(void)
 {
-    openfiber_local_file_desc = open(OPENFIBERS_DEVICE_FILE_NAME, 0);
-    if (openfiber_local_file_desc < 0)
+    libfibers_local_file_desc = open(OPENFIBERS_DEVICE_FILE_NAME, 0);
+    if (libfibers_local_file_desc < 0)
     {
-        printf("Can't open openfibers device file");
+        printf("Can't open libfibers device file");
         return -1;
     }
 
-    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CONVERT_TO_FIBER);
+    int res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_CONVERT_TO_FIBER);
     if (res < 0)
     {
-        printf("openfibers ioctl fiber conversion failed");
+        printf("libfibers ioctl fiber conversion failed");
         return -1;
     }
-    printf("openfibers fiber %d conversion done\n", res);
+    printf("libfibers fiber %d conversion done\n", res);
     return res;
 }
 
-/*
+
 // Pick fibers randomly. This might return a fiber which is
 // currently scheduled on another thread.
 static int get_random_fiber(void)
@@ -129,7 +129,7 @@ void dummy_f(void* arg)
         f = get_random_fiber();
         printf("tid %d in %d switching to %d\n", tid, fibers[(unsigned long)arg], fibers[f]);
         sleep(0.5);
-        openfibers_ioctl_switch_to_fiber(fibers[f]);
+        libfibers_ioctl_switch_to_fiber(fibers[f]);
     }
 }
 
@@ -141,7 +141,7 @@ static void *thread_initialization(void *args)
     unsigned int f;
     (void)args;
 
-    fid_t fid = openfibers_ioctl_convert_to_fiber();
+    fid_t fid = libfibers_ioctl_convert_to_fiber();
 
     while (!init_complete)
         ;
@@ -150,7 +150,7 @@ static void *thread_initialization(void *args)
     {
         f = get_random_fiber();
         printf("WARNING thread %d: while switching to %d\n", tid, f);
-        openfibers_ioctl_switch_to_fiber(fibers[f]);
+        libfibers_ioctl_switch_to_fiber(fibers[f]);
     }
 }
 
@@ -169,13 +169,13 @@ int main(int argc, char *argv[])
     // Initialize pseudorandom generator
     srandom(time(0));
 
-    fid_t f = openfibers_ioctl_convert_to_fiber();
+    fid_t f = libfibers_ioctl_convert_to_fiber();
 
-    //openfibers_ioctl_ping(openfiber_local_file_desc);
+    //libfibers_ioctl_ping(libfibers_local_file_desc);
 
     for (i = 0; i < NUM_FIBERS; i++)
     {
-        fibers[i] = openfibers_ioctl_create_fiber(dummy_f, (void*)i);
+        fibers[i] = libfibers_ioctl_create_fiber(dummy_f, (void*)i);
     }
     sleep(1);
     create_threads(atoi(argv[1]), thread_initialization, NULL);
@@ -183,7 +183,7 @@ int main(int argc, char *argv[])
     init_complete = true;
 
     sleep(3);
-    close(openfiber_local_file_desc);
+    close(libfibers_local_file_desc);
     return 0;
-}*/
+}
 

@@ -400,9 +400,10 @@ long openfibers_ioctl_fls_alloc(struct file *f)
 // Get a FLS value
 long openfibers_ioctl_fls_get(struct file *f, unsigned long idx)
 {
+    fiber_t *current_fiber;
     if (idx >= MAX_FLS)
         return 0;
-    fiber_t *current_fiber = (fiber_t *)f->private_data;
+    current_fiber = (fiber_t *)f->private_data;
     return current_fiber->fls[idx];
 }
 
@@ -416,9 +417,10 @@ bool openfibers_ioctl_fls_free(struct file *f, long idx)
 // Store a value in FLS storage
 bool openfibers_ioctl_fls_set(struct file *f, unsigned long idx, long value)
 {
+    fiber_t *current_fiber;
     if (idx >= MAX_FLS)
         return false;
-    fiber_t *current_fiber = (fiber_t *)f->private_data;
+    current_fiber = (fiber_t *)f->private_data;
     current_fiber->fls[idx] = value;
     return true;
 }
