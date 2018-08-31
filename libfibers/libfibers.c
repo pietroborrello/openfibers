@@ -48,7 +48,12 @@ int openfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
 
 int openfibers_ioctl_switch_to_fiber(fid_t fid)
 {
+    // tell gcc you will clobber them, so let him save and restore them for us during fiber switches
+    asm volatile(
+        "\n\t" ::
+            : "%rbp", "%rbx", "%r12", "%r13", "%r14", "%r15");
     int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    
     if (res < 0)
     {
         printf("openfibers ioctl fiber switch tid %d to %d failed\n", tid, fid);
