@@ -17,11 +17,42 @@ __thread int openfiber_local_file_desc;
 #define NUM_FIBERS 30
 static fid_t fibers[NUM_FIBERS];
 
+// Simplistic allocation for FLS
+long openfibers_ioctl_fls_alloc(void)
+{
+    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_ALLOC);
+    return res;
+}
+
+// Get a FLS value
+long openfibers_ioctl_fls_get(long idx)
+{
+    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_GET, idx);
+    return res;
+}
+
+// Dummy: we don't actually free FLS here...
+bool openfibers_ioctl_fls_free(long idx)
+{
+    int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_FREE, idx);
+    return res;
+}
+
+// Store a value in FLS storage
+void openfibers_ioctl_fls_set(long idx, long value)
+{
+    struct fls_request_t request = {
+        .idx = idx,
+        .value = value,
+    };
+    ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_FLS_SET, (unsigned long)&request);
+}
+
 void openfibers_ioctl_ping(int fd)
 {
     if (ioctl(fd, OPENFIBERS_IOCTL_PING) == -1)
     {
-        perror("openfibers ioctl ping failed");
+        printf("openfibers ioctl ping failed");
         return;
     }
     printf("openfibers ping done\n");
@@ -39,7 +70,7 @@ int openfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
     int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CREATE_FIBER, (unsigned long)&request);
     if (res < 0)
     {
-        perror("openfibers ioctl fiber create failed");
+        printf("openfibers ioctl fiber create failed");
         return -1;
     }
     printf("openfibers fiber %d create done\n", res);
@@ -57,7 +88,7 @@ int openfibers_ioctl_switch_to_fiber(fid_t fid)
     if (res < 0)
     {
         printf("openfibers ioctl fiber switch tid %d to %d failed\n", tid, fid);
-        perror("");
+        //printf("");
         return -1;
     }
     return res;
@@ -68,50 +99,21 @@ int openfibers_ioctl_convert_to_fiber(void)
     openfiber_local_file_desc = open(OPENFIBERS_DEVICE_FILE_NAME, 0);
     if (openfiber_local_file_desc < 0)
     {
-        perror("Can't open openfibers device file");
+        printf("Can't open openfibers device file");
         return -1;
     }
 
     int res = ioctl(openfiber_local_file_desc, OPENFIBERS_IOCTL_CONVERT_TO_FIBER);
     if (res < 0)
     {
-        perror("openfibers ioctl fiber conversion failed");
+        printf("openfibers ioctl fiber conversion failed");
         return -1;
     }
     printf("openfibers fiber %d conversion done\n", res);
     return res;
 }
 
-void f0()
-{
-    while(1)
-    {
-        printf("tid %d in %d switching to %d\n", tid, fibers[0], fibers[1]);
-        sleep(0.1);
-        openfibers_ioctl_switch_to_fiber(fibers[1]);
-    }
-}
-
-void f1()
-{
-    while (1)
-    {
-        printf("tid %d in %d switching to %d\n", tid, fibers[1], fibers[2]);
-        sleep(0.1);
-        openfibers_ioctl_switch_to_fiber(fibers[2]);
-    }
-}
-
-void f2()
-{
-    while (1)
-    {
-        printf("tid %d in %d switching to %d\n", tid, fibers[2], fibers[0]);
-        sleep(0.1);
-        openfibers_ioctl_switch_to_fiber(fibers[0]);
-    }
-}
-
+/*
 // Pick fibers randomly. This might return a fiber which is
 // currently scheduled on another thread.
 static int get_random_fiber(void)
@@ -169,9 +171,6 @@ int main(int argc, char *argv[])
 
     fid_t f = openfibers_ioctl_convert_to_fiber();
 
-    /*fibers[0] = openfibers_ioctl_create_fiber((unsigned long) f0);
-    fibers[1] = openfibers_ioctl_create_fiber((unsigned long) f1);
-    fibers[2] = openfibers_ioctl_create_fiber((unsigned long) f2);*/
     //openfibers_ioctl_ping(openfiber_local_file_desc);
 
     for (i = 0; i < NUM_FIBERS; i++)
@@ -186,4 +185,5 @@ int main(int argc, char *argv[])
     sleep(3);
     close(openfiber_local_file_desc);
     return 0;
-}
+}*/
+

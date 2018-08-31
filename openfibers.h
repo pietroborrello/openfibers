@@ -37,8 +37,10 @@
 #define TRUE (1 == 1)
 #endif
 
-    /// This structure is used to maintain execution context for LPs' userspace threads
-    typedef struct __exec_context_t
+#define MAX_FLS 4096
+
+/// This structure is used to maintain execution context for LPs' userspace threads
+typedef struct __exec_context_t
 {
     // This is the space for general purpose registers
     unsigned long long orig_rax;
@@ -74,6 +76,7 @@ typedef struct
     exec_context_t context;
     unsigned long idx;
     unsigned long fls[4096];
+    unsigned long fls_idx;
 } fiber_t;
 
 struct fibers_node
@@ -99,4 +102,10 @@ struct fiber_request_t
     void* start_args;
     void* stack_address;
     unsigned long stack_size;
+};
+
+struct fls_request_t
+{
+    long value;
+    unsigned long idx;
 };

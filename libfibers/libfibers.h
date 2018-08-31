@@ -21,3 +21,8 @@ struct fiber_request_t
     unsigned long stack_size;
 };
 
+struct fls_request_t
+{
+    long value;
+    unsigned long idx;
+};

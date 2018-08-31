@@ -258,6 +258,7 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     fiber_data->fiber.fid = fiber_data->fid;
     atomic_set(&fiber_data->fiber.running, is_running);
     fiber_data->fiber.start_address = start_address;
+    fiber_data->fiber.fls_idx = 0;
 
     fiber_data->fiber.context.rsp = (unsigned long)stack_address;
     fiber_data->fiber.context.rip = (unsigned long)start_address;
@@ -386,13 +387,49 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     return to_fiber_data->fid;
 }
 
-    /** @brief * This function is called whenever a process tries to do an ioctl on our
+// Simplistic allocation for FLS
+long openfibers_ioctl_fls_alloc(struct file *f)
+{
+    fiber_t *current_fiber = (fiber_t *)f->private_data;
+    long ret = ++current_fiber->fls_idx;
+    if (ret >= MAX_FLS)
+        return -1;
+    return ret;
+}
+
+// Get a FLS value
+long openfibers_ioctl_fls_get(struct file *f, unsigned long idx)
+{
+    if (idx >= MAX_FLS)
+        return 0;
+    fiber_t *current_fiber = (fiber_t *)f->private_data;
+    return current_fiber->fls[idx];
+}
+
+// Dummy: we don't actually free FLS here...
+bool openfibers_ioctl_fls_free(struct file *f, long idx)
+{
+    (void)idx;
+    return true;
+}
+
+// Store a value in FLS storage
+bool openfibers_ioctl_fls_set(struct file *f, unsigned long idx, long value)
+{
+    if (idx >= MAX_FLS)
+        return false;
+    fiber_t *current_fiber = (fiber_t *)f->private_data;
+    current_fiber->fls[idx] = value;
+    return true;
+}
+
+/** @brief * This function is called whenever a process tries to do an ioctl on our
  *  device file.
  *  @param f A pointer to a file object (defined in linux/fs.h)
  *  @param cmd The command
  *  @param arg The arguments
  */
-    static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
+static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
     switch (cmd)
     {
@@ -431,12 +468,19 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
         break;
         
     case OPENFIBERS_IOCTL_FLS_ALLOC:
+        return openfibers_ioctl_fls_alloc(f);
         break;
     case OPENFIBERS_IOCTL_FLS_FREE:
+        return openfibers_ioctl_fls_free(f, (unsigned long)arg);
         break;
     case OPENFIBERS_IOCTL_FLS_GET:
+        return openfibers_ioctl_fls_get(f, (unsigned long)arg);
         break;
     case OPENFIBERS_IOCTL_FLS_SET:
+        if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fls_request_t)))
+            return -EINVAL;
+
+        return openfibers_ioctl_fls_set(f, ((struct fls_request_t *)arg)->idx, ((struct fls_request_t *)arg)->value);
         break;
     default:
         return -EINVAL;
