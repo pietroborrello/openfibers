@@ -1,28 +1,20 @@
-#include <linux/ioctl.h>
+#ifndef libfibers_h__
+#define libfibers_h__
 
-#define OPENFIBERS_IOCTL_MAGIC 'o'
+extern long libfibers_ioctl_fls_alloc(void);
 
-#define OPENFIBERS_IOCTL_PING _IO(OPENFIBERS_IOCTL_MAGIC, 1)
-#define OPENFIBERS_IOCTL_CREATE_FIBER _IOW(OPENFIBERS_IOCTL_MAGIC, 2, unsigned long)
-#define OPENFIBERS_IOCTL_SWITCH_TO_FIBER _IOW(OPENFIBERS_IOCTL_MAGIC, 3, unsigned long)
-#define OPENFIBERS_IOCTL_CONVERT_TO_FIBER _IO(OPENFIBERS_IOCTL_MAGIC, 4)
-#define OPENFIBERS_IOCTL_FLS_ALLOC _IO(OPENFIBERS_IOCTL_MAGIC, 5)
-#define OPENFIBERS_IOCTL_FLS_FREE _IOW(OPENFIBERS_IOCTL_MAGIC, 6, unsigned long)
-#define OPENFIBERS_IOCTL_FLS_SET _IOW(OPENFIBERS_IOCTL_MAGIC, 7, unsigned long)
-#define OPENFIBERS_IOCTL_FLS_GET _IOW(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
-#define OPENFIBERS_DEVICE_FILE_NAME "/dev/openfibers"
+extern long libfibers_ioctl_fls_get(long idx);
 
-typedef pid_t fid_t;
-struct fiber_request_t
-{
-    void (*start_address)(void *);
-    void *start_args;
-    void *stack_address;
-    unsigned long stack_size;
-};
+extern bool libfibers_ioctl_fls_free(long idx);
 
-struct fls_request_t
-{
-    long value;
-    unsigned long idx;
-};
+extern void libfibers_ioctl_fls_set(long idx, long value);
+
+extern void libfibers_ioctl_ping(int fd);
+
+extern void* libfibers_ioctl_create_fiber(void (*addr)(void *), void *args);
+
+extern void* libfibers_ioctl_switch_to_fiber(void* fid);
+
+extern void* libfibers_ioctl_convert_to_fiber(void);
+
+#endif // libfibers_h__
