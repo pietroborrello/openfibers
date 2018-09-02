@@ -260,6 +260,7 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     fiber_data->fiber.start_address = start_address;
     fiber_data->fiber.fls_idx = 0;
 
+    memset(&fiber_data->fiber.context, 0, sizeof(exec_context_t));
     fiber_data->fiber.context.rsp = (unsigned long)stack_address;
     fiber_data->fiber.context.rip = (unsigned long)start_address;
     fiber_data->fiber.context.rdi = (unsigned long)args;
@@ -351,8 +352,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     current_fiber->context.r15 = regs->r15;
     current_fiber->context.flags = regs->flags;
     current_fiber->context.rip = regs->ip;
-    asm volatile("fxsave %0"
-                 : "+m"(current_fiber->context.others));
+    //asm volatile("fxsave %0": "+m"(current_fiber->context.others));
 
     pr_info("Thread %d - Old stack: 0x%llx - Old IP: 0x%llx\n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
@@ -375,8 +375,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     regs->r15 = to_fiber_data->fiber.context.r15;
     regs->flags = to_fiber_data->fiber.context.flags;
     regs->ip = to_fiber_data->fiber.context.rip;
-    asm volatile("fxrstor %0"
-                 : "+m"(to_fiber_data->fiber.context.others));
+    //asm volatile("fxrstor %0": "+m"(to_fiber_data->fiber.context.others));
 
     f->private_data = (void*) &to_fiber_data->fiber;
     //leave previous fiber not running anymore
@@ -398,13 +397,14 @@ long openfibers_ioctl_fls_alloc(struct file *f)
 }
 
 // Get a FLS value
-long openfibers_ioctl_fls_get(struct file *f, unsigned long idx)
+void openfibers_ioctl_fls_get(struct file *f, unsigned long idx, unsigned long* value)
 {
     fiber_t *current_fiber;
     if (idx >= MAX_FLS)
-        return 0;
+        return;
     current_fiber = (fiber_t *)f->private_data;
-    return current_fiber->fls[idx];
+    *value = current_fiber->fls[idx];
+    return;
 }
 
 // Dummy: we don't actually free FLS here...
@@ -455,7 +455,7 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
         
     case OPENFIBERS_IOCTL_CREATE_FIBER:
 
-        if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fiber_request_t)))
+        if (!access_ok(VERIFY_WRITE, (void *) arg, sizeof(struct fiber_request_t)))
             return -EINVAL;
 
         return openfibers_ioctl_create_fiber(((struct fiber_request_t *)arg)->stack_address, ((struct fiber_request_t *)arg)->start_address, ((struct fiber_request_t *)arg)->start_args, 0);
@@ -476,10 +476,14 @@ static long openfibers_dev_ioctl(struct file *f, unsigned int cmd, unsigned long
         return openfibers_ioctl_fls_free(f, (unsigned long)arg);
         break;
     case OPENFIBERS_IOCTL_FLS_GET:
-        return openfibers_ioctl_fls_get(f, (unsigned long)arg);
+        if (!access_ok(VERIFY_WRITE, (void*) arg, sizeof(struct fls_request_t)))
+            return -EINVAL;
+        // write result into value, since ioctl only returns an integer in userspace
+        openfibers_ioctl_fls_get(f, ((struct fls_request_t *)arg)->idx, &((struct fls_request_t *)arg)->value);
+        return 0;
         break;
     case OPENFIBERS_IOCTL_FLS_SET:
-        if (!access_ok(VERIFY_WRITE, arg, sizeof(struct fls_request_t)))
+        if (!access_ok(VERIFY_READ, (void *) arg, sizeof(struct fls_request_t)))
             return -EINVAL;
 
         return openfibers_ioctl_fls_set(f, ((struct fls_request_t *)arg)->idx, ((struct fls_request_t *)arg)->value);

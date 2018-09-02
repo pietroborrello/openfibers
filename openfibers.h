@@ -4,7 +4,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
-
+#include <linux/string.h>
 #include <linux/device.h>  // Header to support the kernel Driver Model
 #include <linux/kernel.h>  // Contains types, macros, functions for the kernel
 #include <linux/fs.h>      // Header for the Linux file system support
@@ -22,7 +22,7 @@
 #define OPENFIBERS_IOCTL_FLS_ALLOC _IO(OPENFIBERS_IOCTL_MAGIC, 5)
 #define OPENFIBERS_IOCTL_FLS_FREE _IOW(OPENFIBERS_IOCTL_MAGIC, 6, unsigned long)
 #define OPENFIBERS_IOCTL_FLS_SET _IOW(OPENFIBERS_IOCTL_MAGIC, 7, unsigned long)
-#define OPENFIBERS_IOCTL_FLS_GET _IOW(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
+#define OPENFIBERS_IOCTL_FLS_GET _IOWR(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
 
 #endif
 

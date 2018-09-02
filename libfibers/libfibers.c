@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <stdbool.h>
 #include "thread.h"
 
@@ -19,7 +20,7 @@
 #define OPENFIBERS_IOCTL_FLS_ALLOC _IO(OPENFIBERS_IOCTL_MAGIC, 5)
 #define OPENFIBERS_IOCTL_FLS_FREE _IOW(OPENFIBERS_IOCTL_MAGIC, 6, unsigned long)
 #define OPENFIBERS_IOCTL_FLS_SET _IOW(OPENFIBERS_IOCTL_MAGIC, 7, unsigned long)
-#define OPENFIBERS_IOCTL_FLS_GET _IOW(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
+#define OPENFIBERS_IOCTL_FLS_GET _IOWR(OPENFIBERS_IOCTL_MAGIC, 8, unsigned long)
 #define OPENFIBERS_DEVICE_FILE_NAME "/dev/openfibers"
 
 //typedef pid_t fid_t;
@@ -53,8 +54,15 @@ long libfibers_ioctl_fls_alloc(void)
 // Get a FLS value
 long libfibers_ioctl_fls_get(long idx)
 {
-    long res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_FLS_GET, idx);
-    return res;
+    struct fls_request_t request = {
+        .idx = idx,
+        .value = -1,
+    };
+    long res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_FLS_GET, (unsigned long)&request);
+    if(res < 0)
+        return -1;
+    else
+        return request.value;
 }
 
 // Dummy: we don't actually free FLS here...
@@ -105,11 +113,33 @@ void* libfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
 
 void* libfibers_ioctl_switch_to_fiber(void* fid)
 {
+    unsigned char fpu_state[512] __attribute__((aligned(16))); // fxsave wants 16-byte aligned memory
     // tell gcc you will clobber them, so let him save and restore them for us during fiber switches
     asm volatile(
         "\n\t" ::
             : "%rbp", "%rbx", "%r12", "%r13", "%r14", "%r15");
-    long res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    /*asm volatile(
+        "lahf\n\t"
+        "seto %%al\n\t"
+        "mov %%rax, %0\n\t" ::
+            : "%rax");*/
+    asm volatile("fxsave %0": "+m"(fpu_state));
+    //avoid libc calling other levels of functions
+    //long res = syscall(SYS_ioctl, libfibers_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    //long res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
+    long res;
+    asm volatile(
+        "syscall"
+        : "=a"(res)
+        : "0"(SYS_ioctl), "D"(libfibers_local_file_desc), "S"(OPENFIBERS_IOCTL_SWITCH_TO_FIBER), "d"(fid)
+        : "cc", "%rcx", "%r11", "memory");
+    asm volatile("fxrstor %0": "+m"(fpu_state));
+    /*asm volatile(
+        //"pop %%rax\n\t"
+        "pop %%rax\n\t"
+        "add $0x7f, %%al\n\t"
+        "sahf\n\t " ::
+            : "%rax");*/
     if (res < 0)
     {
         return NULL;
