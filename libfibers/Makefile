@@ -15,6 +15,7 @@ all: #$(EXEC)
 install:
 	cp libfibers.so /usr/lib
 	chmod 0755 /usr/lib/libfibers.so
+	ldconfig
 
 $(EXEC): $(OBJS)
 	$(CC) $(OBJS) $(LIBS) -o $(EXEC)

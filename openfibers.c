@@ -334,10 +334,10 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     regs = task_pt_regs(current);
 
     current_fiber->context.rsp = regs->sp;
-    current_fiber->context.rbp = regs->bp;
+    //current_fiber->context.rbp = regs->bp;
     current_fiber->context.orig_rax = regs->orig_ax;
     current_fiber->context.rax = regs->ax;
-    current_fiber->context.rbx = regs->bx;
+    //current_fiber->context.rbx = regs->bx;
     current_fiber->context.rcx = regs->cx;
     current_fiber->context.rdx = regs->dx;
     current_fiber->context.rdi = regs->di;
@@ -346,21 +346,26 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     current_fiber->context.r9 = regs->r9;
     current_fiber->context.r10 = regs->r10;
     current_fiber->context.r11 = regs->r11;
-    current_fiber->context.r12 = regs->r12;
-    current_fiber->context.r13 = regs->r13;
-    current_fiber->context.r14 = regs->r14;
-    current_fiber->context.r15 = regs->r15;
+    //current_fiber->context.r12 = regs->r12;
+    //current_fiber->context.r13 = regs->r13;
+    //current_fiber->context.r14 = regs->r14;
+    //current_fiber->context.r15 = regs->r15;
     current_fiber->context.flags = regs->flags;
     current_fiber->context.rip = regs->ip;
     //asm volatile("fxsave %0": "+m"(current_fiber->context.others));
 
-    pr_info("Thread %d - Old stack: 0x%llx - Old IP: 0x%llx\n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+    // Unknown symbol fpu__copy (err 0)
+    //fpu__save(&current->thread.fpu);
+    //fpu__copy(&current_fiber->context.fpu_context, &current->thread.fpu);
+    fpu__save(&current_fiber->context.fpu_context);
+
+    //pr_info("Thread %d - Old stack: 0x%llx - Old IP: 0x%llx\n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
     regs->sp = to_fiber_data->fiber.context.rsp;
-    regs->bp = to_fiber_data->fiber.context.rbp;
+    //regs->bp = to_fiber_data->fiber.context.rbp;
     regs->orig_ax = to_fiber_data->fiber.context.orig_rax;
     regs->ax = to_fiber_data->fiber.context.rax;
-    regs->bx = to_fiber_data->fiber.context.rbx;
+    //regs->bx = to_fiber_data->fiber.context.rbx;
     regs->cx = to_fiber_data->fiber.context.rcx;
     regs->dx = to_fiber_data->fiber.context.rdx;
     regs->di = to_fiber_data->fiber.context.rdi;
@@ -369,19 +374,20 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     regs->r9 = to_fiber_data->fiber.context.r9;
     regs->r10 = to_fiber_data->fiber.context.r10;
     regs->r11 = to_fiber_data->fiber.context.r11;
-    regs->r12 = to_fiber_data->fiber.context.r12;
-    regs->r13 = to_fiber_data->fiber.context.r13;
-    regs->r14 = to_fiber_data->fiber.context.r14;
-    regs->r15 = to_fiber_data->fiber.context.r15;
+    //regs->r12 = to_fiber_data->fiber.context.r12;
+    //regs->r13 = to_fiber_data->fiber.context.r13;
+    //regs->r14 = to_fiber_data->fiber.context.r14;
+    //regs->r15 = to_fiber_data->fiber.context.r15;
     regs->flags = to_fiber_data->fiber.context.flags;
     regs->ip = to_fiber_data->fiber.context.rip;
     //asm volatile("fxrstor %0": "+m"(to_fiber_data->fiber.context.others));
+    fpu__restore(&to_fiber_data->fiber.context.fpu_context);
 
     f->private_data = (void*) &to_fiber_data->fiber;
     //leave previous fiber not running anymore
     atomic_set(&current_fiber->running, 0);
 
-    pr_info("Thread %d - New stack: 0x%llx - New IP: 0x%llx \n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
+    //pr_info("Thread %d - New stack: 0x%llx - New IP: 0x%llx \n", current->pid, (long long unsigned int)regs->sp, (long long unsigned int)regs->ip);
 
     return to_fiber_data->fid;
 }

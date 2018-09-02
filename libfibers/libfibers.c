@@ -113,7 +113,7 @@ void* libfibers_ioctl_create_fiber(void (*addr)(void *), void* args)
 
 void* libfibers_ioctl_switch_to_fiber(void* fid)
 {
-    unsigned char fpu_state[512] __attribute__((aligned(16))); // fxsave wants 16-byte aligned memory
+    //unsigned char fpu_state[512] __attribute__((aligned(16))); // fxsave wants 16-byte aligned memory
     // tell gcc you will clobber them, so let him save and restore them for us during fiber switches
     asm volatile(
         "\n\t" ::
@@ -123,7 +123,7 @@ void* libfibers_ioctl_switch_to_fiber(void* fid)
         "seto %%al\n\t"
         "mov %%rax, %0\n\t" ::
             : "%rax");*/
-    asm volatile("fxsave %0": "+m"(fpu_state));
+    //asm volatile("fxsave %0": "+m"(fpu_state));
     //avoid libc calling other levels of functions
     //long res = syscall(SYS_ioctl, libfibers_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
     //long res = ioctl(libfibers_local_file_desc, OPENFIBERS_IOCTL_SWITCH_TO_FIBER, fid);
@@ -133,7 +133,7 @@ void* libfibers_ioctl_switch_to_fiber(void* fid)
         : "=a"(res)
         : "0"(SYS_ioctl), "D"(libfibers_local_file_desc), "S"(OPENFIBERS_IOCTL_SWITCH_TO_FIBER), "d"(fid)
         : "cc", "%rcx", "%r11", "memory");
-    asm volatile("fxrstor %0": "+m"(fpu_state));
+    //asm volatile("fxrstor %0": "+m"(fpu_state));
     /*asm volatile(
         //"pop %%rax\n\t"
         "pop %%rax\n\t"

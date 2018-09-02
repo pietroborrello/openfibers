@@ -10,6 +10,8 @@
 #include <linux/fs.h>      // Header for the Linux file system support
 #include <linux/uaccess.h> // Required for the copy to user function
 #include <linux/kprobes.h> // Required for kprobe
+#include <asm/fpu/types.h>
+#include <asm/fpu/internal.h>
 
 #include <linux/ioctl.h>
 
@@ -64,7 +66,9 @@ typedef struct __exec_context_t
     unsigned long long flags;
 
     // Space for other registers
-    unsigned char others[512] __attribute__((aligned(16))); // fxsave wants 16-byte aligned memory
+
+    //unsigned char others[512] __attribute__((aligned(16))); // fxsave wants 16-byte aligned memory
+    struct fpu fpu_context;
 } exec_context_t;
 
 typedef pid_t fid_t;
