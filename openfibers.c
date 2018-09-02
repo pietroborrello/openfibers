@@ -10,10 +10,10 @@ MODULE_AUTHOR("pietroborrello");
 MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
-struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
+static struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
 //static /* TODO: __thread - Unknown symbol _GLOBAL_OFFSET_TABLE_ (err 0)*/ fiber_t *current_fiber = NULL; // to know which fiber unset running
 static rwlock_t fibers_by_tgid_tree_rwlock = __RW_LOCK_UNLOCKED(fibers_by_tgid_tree_rwlock);
-unsigned long fibers_by_tgid_tree_rwlock_flags;
+static unsigned long fibers_by_tgid_tree_rwlock_flags;
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
@@ -30,7 +30,7 @@ static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
 static struct kprobe kp;
 
 
-struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
+static struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
 {
     struct rb_node *node;
     read_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
@@ -57,7 +57,7 @@ struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
     return NULL;
 }
 
-struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, rwlock_t fibers_root_rwlock, unsigned long fibers_root_rwlock_flags)
+static struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, rwlock_t fibers_root_rwlock, unsigned long fibers_root_rwlock_flags)
 {
     struct rb_node *node;
     read_lock_irqsave(&fibers_root_rwlock, fibers_root_rwlock_flags);
@@ -84,7 +84,7 @@ struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, rwlock_t 
     return NULL;
 }
 
-int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
+static int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
 {
     struct rb_node **new, *parent;
     write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
@@ -115,7 +115,7 @@ int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *data)
     return TRUE;
 }
 
-int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, rwlock_t fibers_root_rwlock, unsigned long fibers_root_rwlock_flags)
+static int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, rwlock_t fibers_root_rwlock, unsigned long fibers_root_rwlock_flags)
 {
     struct rb_node **new, *parent;
     write_lock_irqsave(&fibers_root_rwlock, fibers_root_rwlock_flags);
@@ -393,7 +393,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
 }
 
 // Simplistic allocation for FLS
-long openfibers_ioctl_fls_alloc(struct file *f)
+static long openfibers_ioctl_fls_alloc(struct file *f)
 {
     fiber_t *current_fiber = (fiber_t *)f->private_data;
     long ret = ++current_fiber->fls_idx;
@@ -403,7 +403,7 @@ long openfibers_ioctl_fls_alloc(struct file *f)
 }
 
 // Get a FLS value
-void openfibers_ioctl_fls_get(struct file *f, unsigned long idx, unsigned long* value)
+static void openfibers_ioctl_fls_get(struct file *f, unsigned long idx, unsigned long *value)
 {
     fiber_t *current_fiber;
     if (idx >= MAX_FLS)
@@ -414,14 +414,14 @@ void openfibers_ioctl_fls_get(struct file *f, unsigned long idx, unsigned long* 
 }
 
 // Dummy: we don't actually free FLS here...
-bool openfibers_ioctl_fls_free(struct file *f, long idx)
+static bool openfibers_ioctl_fls_free(struct file *f, long idx)
 {
     (void)idx;
     return true;
 }
 
 // Store a value in FLS storage
-bool openfibers_ioctl_fls_set(struct file *f, unsigned long idx, long value)
+static bool openfibers_ioctl_fls_set(struct file *f, unsigned long idx, long value)
 {
     fiber_t *current_fiber;
     if (idx >= MAX_FLS)
