@@ -96,6 +96,7 @@ struct fibers_by_tgid_node
     pid_t tgid;
     atomic_t max_fid;
     rwlock_t fibers_root_rwlock;
+    struct kref refcount;
     struct rb_root* fibers_root;
 };
 

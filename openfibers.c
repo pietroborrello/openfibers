@@ -13,6 +13,7 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 static struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
 //static /* TODO: __thread - Unknown symbol _GLOBAL_OFFSET_TABLE_ (err 0)*/ fiber_t *current_fiber = NULL; // to know which fiber unset running
 static rwlock_t fibers_by_tgid_tree_rwlock = __RW_LOCK_UNLOCKED(fibers_by_tgid_tree_rwlock);
+static DEFINE_SPINLOCK(initialization_lock);
 
 static int majorNumber;                     ///< Stores the device number -- determined automatically
 
@@ -24,9 +25,6 @@ static int openfibers_dev_open(struct inode *, struct file *);
 static int openfibers_dev_release(struct inode *, struct file *);
 static ssize_t openfibers_dev_read(struct file *, char *, size_t, loff_t *);
 static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
-
-// kprobe handler
-static struct kprobe kp;
 
 
 static struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
@@ -149,6 +147,46 @@ static int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, rwl
     return TRUE;
 }
 
+static void fibers_tree_cleanup(struct rb_root *root)
+{
+    struct rb_node *next = rb_first_postorder(root);
+
+    // postorder visit to free all tree
+    while (next)
+    {
+        struct fibers_node *this = container_of(next, struct fibers_node, node);
+        next = rb_next_postorder(next);
+
+        rb_erase(&this->node, root);
+        //kfree(this->fiber);
+        // TODO: free process stack!
+        kfree(this);
+    }
+}
+
+static void tgid_fibers_tree_cleanup(struct rb_root *root)
+{
+    struct rb_node *next;
+    unsigned long fibers_by_tgid_tree_rwlock_flags;
+    //only to be sure, should not be any fiber active or present
+    write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    next = rb_first_postorder(root);
+
+    // postorder visit to free all tree
+    while (next)
+    {
+        struct fibers_by_tgid_node *this = container_of(next, struct fibers_by_tgid_node, node);
+        next = rb_next_postorder(next);
+
+        rb_erase(&this->node, root);
+        fibers_tree_cleanup(this->fibers_root);
+        kfree(this->fibers_root);
+        kfree(this);
+    }
+    write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    // TODO: handle deletion, not to block others
+}
+
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
  *  using a C99 syntax structure. char devices usually implement open, read, write and release calls
@@ -161,15 +199,56 @@ static struct file_operations dev_fops =
     .unlocked_ioctl = openfibers_dev_ioctl,
     .release = openfibers_dev_release,
 };
-
+static struct fibers_by_tgid_node* initialize_fibers_for_current(void);
 /** @brief The device open function that is called each time the device is opened
  *  @param inodep A pointer to an inode object (defined in linux/fs.h)
  *  @param filep A pointer to a file object (defined in linux/fs.h)
  */
 static int openfibers_dev_open(struct inode *inodep, struct file *filep)
 {
-    //pr_info("Device has been opened\n");
+    struct fibers_by_tgid_node *tgid_data;
+    unsigned long flags;
+
+    spin_lock_irqsave(&initialization_lock, flags);
+    tgid_data = initialize_fibers_for_current();
+
+    if (IS_ERR(tgid_data) && PTR_ERR(tgid_data) == -EEXIST)
+    {
+        tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+        if(!tgid_data)
+        {
+            pr_crit("failed fibers initialization for pid %d, should exist\n", current->pid);
+            spin_unlock_irqrestore(&initialization_lock, flags);
+            return -ENOENT;
+        }
+        kref_get(&tgid_data->refcount);
+    }
+    else if (IS_ERR(tgid_data))
+    {
+        pr_crit("failed fibers initialization for pid %d\n", current->pid);
+        spin_unlock_irqrestore(&initialization_lock, flags);
+        return PTR_ERR(tgid_data);
+    }
+    spin_unlock_irqrestore(&initialization_lock, flags);
     return 0;
+}
+
+static void release_tgid_entry(struct kref *ref)
+{
+    unsigned long fibers_root_rwlock_flags;
+    unsigned long fibers_by_tgid_tree_rwlock_flags;
+    struct fibers_by_tgid_node *data = container_of(ref, struct fibers_by_tgid_node, refcount);
+
+    write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    write_lock_irqsave(&data->fibers_root_rwlock, fibers_root_rwlock_flags);
+    // // TODO: when lock and unlock?
+    pr_info("cleanup: %d\n", data->tgid);
+    rb_erase(&data->node, &fibers_by_tgid_tree);
+    fibers_tree_cleanup(data->fibers_root);
+    kfree(data->fibers_root);
+    write_unlock_irqrestore(&data->fibers_root_rwlock, fibers_root_rwlock_flags);
+    write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
+    kfree(data);
 }
 
 /** @brief The device release function that is called whenever the device is closed/released by
@@ -179,7 +258,21 @@ static int openfibers_dev_open(struct inode *inodep, struct file *filep)
  */
 static int openfibers_dev_release(struct inode *inodep, struct file *filep)
 {
-    //pr_info("Device successfully closed\n");
+    struct fibers_by_tgid_node *data;
+    unsigned long flags;
+
+    spin_lock_irqsave(&initialization_lock, flags);
+    data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+
+    if (!data)
+    {
+        pr_crit("failed fibers cleanup for pid %d, should exist\n", current->pid);
+        spin_unlock_irqrestore(&initialization_lock, flags);
+        return -ENOENT;
+    }
+
+    kref_put(&data->refcount, release_tgid_entry);
+    spin_unlock_irqrestore(&initialization_lock, flags);
     return 0;
 }
 
@@ -225,14 +318,15 @@ static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
     // start with empty unlocked tree
     *data->fibers_root = RB_ROOT;
     rwlock_init(&data->fibers_root_rwlock);
+    kref_init(&data->refcount);
 
     ret = tgid_rbtree_insert(&fibers_by_tgid_tree, data);
     if (!ret)
         {
-            pr_crit("tgid already inserted in fibers_by_tgid\n");
+            pr_info("tgid already inserted in fibers_by_tgid\n");
             kfree(data->fibers_root);
             kfree(data);
-            return tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
+            return ERR_PTR(-EEXIST);
         }
 
     return data;
@@ -249,12 +343,8 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
     if (!tgid_data)
     {
-        tgid_data = initialize_fibers_for_current();
-        if (IS_ERR(tgid_data))
-        {
-            pr_crit("failed fibers initialization for tgid: %d\n", current->tgid);
-            return PTR_ERR(tgid_data);
-        }
+        pr_crit("Thread %d has no fiber context initialized", current->pid);
+        return -ENOENT;
     }
     fiber_data = kmalloc(sizeof(struct fibers_node), GFP_KERNEL | __GFP_ZERO);
     if (!fiber_data)
@@ -287,7 +377,6 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
     fid_t fid;
     //struct pt_regs *regs = task_pt_regs(current);
 
-    //LOCK
     long res = openfibers_ioctl_create_fiber(0, 0, 0, 1);
     if(res < 0)
         return res;
@@ -297,11 +386,9 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
     if (!tgid_data)
     {
         pr_crit("Thread %d unable to initialize fiber context\n", current->pid);
-        //UNLOCK
         return -ENOMEM;
     }
-    //GET_REF
-    //UNLOCK
+
     new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, tgid_data->fibers_root_rwlock);
     if (!new_fiber_data)
     {
@@ -528,68 +615,7 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
     return NULL; 
 }
 
-static void fibers_tree_cleanup(struct rb_root *root)
-{
-    struct rb_node *next = rb_first_postorder(root);
 
-    // postorder visit to free all tree
-    while (next)
-    {
-        struct fibers_node *this = container_of(next, struct fibers_node, node);
-        next = rb_next_postorder(next);
-
-        rb_erase(&this->node, root);
-        //kfree(this->fiber);
-        // TODO: free process stack!
-        kfree(this);
-    }
-}
-
-static void tgid_fibers_tree_cleanup(struct rb_root *root)
-{
-    struct rb_node *next;
-    unsigned long fibers_by_tgid_tree_rwlock_flags;
-    write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
-    next = rb_first_postorder(root);
-
-    // postorder visit to free all tree
-    while (next)
-    {
-        struct fibers_by_tgid_node *this = container_of(next, struct fibers_by_tgid_node, node);
-        next = rb_next_postorder(next);
-
-        rb_erase(&this->node, root);
-        fibers_tree_cleanup(this->fibers_root);
-        kfree(this->fibers_root);
-        kfree(this);
-    }
-    write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
-    // TODO: handle deletion, not to block others
-}
-
-// kprobe called function
-static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
-{
-    //pr_info("exiting: %d\n", current->pid);
-    struct fibers_by_tgid_node *data;
-    unsigned long fibers_root_rwlock_flags;
-    unsigned long fibers_by_tgid_tree_rwlock_flags;
-    data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
-
-    if (data){
-        write_lock_irqsave(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
-        write_lock_irqsave(&data->fibers_root_rwlock, fibers_root_rwlock_flags);
-        // // TODO: when lock and unlock?
-        pr_info("cleanup: %d\n", data->tgid);
-        rb_erase(&data->node, &fibers_by_tgid_tree);
-        fibers_tree_cleanup(data->fibers_root);
-        kfree(data->fibers_root);
-        write_unlock_irqrestore(&data->fibers_root_rwlock, fibers_root_rwlock_flags);
-        write_unlock_irqrestore(&fibers_by_tgid_tree_rwlock, fibers_by_tgid_tree_rwlock_flags);
-        kfree(data);
-    }
-    return 0;
-}
 
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C file. The __init
@@ -599,8 +625,6 @@ static int handle_kprobe(struct kprobe *kp, struct pt_regs *regs)
  */
 static int __init fibers_init(void)
 {
-    int ret;
-
     // Try to dynamically allocate a major number for the device -- more difficult but worth it
     majorNumber = register_chrdev(0, DEVICE_NAME, &dev_fops);
     if (majorNumber < 0)
@@ -631,16 +655,6 @@ static int __init fibers_init(void)
 
     pr_info("registered correctly with major number %d\n", majorNumber);
 
-    // register the kprobe
-    kp.pre_handler = handle_kprobe;
-    kp.symbol_name = "do_group_exit";
-    ret = register_kprobe(&kp);
-    if (ret < 0)
-    {
-        pr_crit("Failed to set kprobe\n");
-        return ret;
-    }
-
     return 0;
 }
 
@@ -654,7 +668,6 @@ static void __exit fibers_cleanup(void)
     class_unregister(openfibersClass);                      // unregister the device class
     class_destroy(openfibersClass);                         // remove the device class
     unregister_chrdev(majorNumber, DEVICE_NAME);         // unregister the major number
-    unregister_kprobe(&kp);                              // remove kprobe
 
     // cleanup all the fibers pending
     tgid_fibers_tree_cleanup(&fibers_by_tgid_tree);
