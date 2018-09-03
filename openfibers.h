@@ -94,11 +94,11 @@ struct fibers_node
 struct fibers_by_tgid_node
 {
     struct rb_node node;
-    pid_t tgid;
-    atomic_t max_fid;
+    struct rb_root *fibers_root;
     struct rw_semaphore fibers_root_rwsem;
     struct kref refcount;
-    struct rb_root* fibers_root;
+    pid_t tgid;
+    atomic_t max_fid;
 };
 
 struct fiber_request_t
