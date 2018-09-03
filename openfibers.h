@@ -88,6 +88,7 @@ struct fibers_node
     struct rb_node node;
     fid_t fid;
     fiber_t fiber;
+    struct fibers_by_tgid_node* fibers_root_node;
 };
 
 struct fibers_by_tgid_node

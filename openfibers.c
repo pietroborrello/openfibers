@@ -350,6 +350,7 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     if (!fiber_data)
         return -ENOMEM;
     fiber_data->fid = atomic_inc_return(&tgid_data->max_fid);
+    fiber_data->fibers_root_node = tgid_data;
     fiber_data->fiber.fid = fiber_data->fid;
     atomic_set(&fiber_data->fiber.running, is_running);
     fiber_data->fiber.start_address = start_address;
@@ -415,12 +416,12 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     struct pt_regs *regs;
     fiber_t *current_fiber = (fiber_t*) f->private_data;
 
-    tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, current->tgid);
-    if (!tgid_data || !current_fiber)
+    if (!current_fiber)
     {
-        pr_crit("Thread %d has no fiber context initialized: curr=%llx\n", current->pid, (unsigned long long)current_fiber);
+        pr_crit("Thread %d has no current fiber context initialized\n", current->pid);
         return -ENOENT;
     }
+    tgid_data = container_of(current_fiber, struct fibers_node, fiber)->fibers_root_node;
     to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber, tgid_data->fibers_root_rwlock);
     if (!to_fiber_data)
     {
