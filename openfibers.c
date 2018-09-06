@@ -303,13 +303,32 @@ static ssize_t openfibers_dev_read(struct file *filep, char *buffer, size_t len,
 
 static ssize_t proc_fiber_read(struct file *file, char __user *ubuf, size_t count, loff_t *ppos)
 {
-    char buf[BUFSIZE];
+    struct fibers_by_tgid_node *tgid_data;
+    struct fibers_node *fiber_data;
+    char buf[100];
     int len = 0;
-    printk(KERN_DEBUG "read handler\n");
-    if (*ppos > 0 || count < BUFSIZE)
+    pid_t tgid;
+    fid_t fid;
+    long tmp;
+
+    if (*ppos > 0 || count < 100)
         return 0;
-    len += sprintf(buf, "irq = %d\n", irq);
-    len += sprintf(buf + len, "mode = %d\n", mode);
+
+    if(kstrtol(file->f_path.dentry->d_name.name, 10, &tmp))
+        return -1;
+    fid = (fid_t) tmp;
+
+    if (kstrtol(file->f_path.dentry->d_parent->d_name.name, 10, &tmp))
+        return -1;
+    tgid = (pid_t) tmp;
+
+    tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, tgid);
+    fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, tgid_data->fibers_root_rwsem);
+
+    len += sprintf(buf, "running = %d\n", (int)atomic_read(&fiber_data->fiber.running));
+    len += sprintf(buf + len, "start = 0x%lx\n", (long unsigned int)fiber_data->fiber.start_address);
+    //len += sprintf(buf, "fid: %s\n", file->f_path.dentry->d_name.name);
+    //len += sprintf(buf + len, "pid: %s\n", file->f_path.dentry->d_parent->d_name.name);
 
     if (copy_to_user(ubuf, buf, len))
         return -EFAULT;
