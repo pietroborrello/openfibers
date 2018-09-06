@@ -10,6 +10,7 @@
 #include <linux/fs.h>      // Header for the Linux file system support
 #include <linux/uaccess.h> // Required for the copy to user function
 #include <linux/kprobes.h> // Required for kprobe
+#include <linux/proc_fs.h>
 #include <asm/fpu/types.h>
 #include <asm/fpu/internal.h>
 
@@ -81,6 +82,7 @@ typedef struct
     unsigned long idx;
     unsigned long fls[4096];
     unsigned long fls_idx;
+    struct proc_dir_entry *proc_entry;
 } fiber_t;
 
 struct fibers_node
@@ -99,6 +101,7 @@ struct fibers_by_tgid_node
     struct rw_semaphore fibers_root_rwsem;
     struct kref refcount;
     atomic_t max_fid;
+    struct proc_dir_entry *tgid_proc_fibers;
 };
 
 struct fiber_request_t

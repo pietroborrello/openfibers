@@ -11,6 +11,7 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 
 static struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
+static struct proc_dir_entry *proc_fibers;
 
 static DECLARE_RWSEM(fibers_by_tgid_tree_rwsem);
 static DEFINE_MUTEX(initialization_mutex);
@@ -154,8 +155,7 @@ static void fibers_tree_cleanup(struct rb_root *root)
         next = rb_next_postorder(next);
 
         rb_erase(&this->node, root);
-        //kfree(this->fiber);
-        // TODO: free process stack!
+        proc_remove(this->fiber.proc_entry);
         kfree(this);
     }
 }
@@ -171,10 +171,14 @@ static void tgid_fibers_tree_cleanup(struct rb_root *root)
     while (next)
     {
         struct fibers_by_tgid_node *this = container_of(next, struct fibers_by_tgid_node, node);
+        char buf[64];
+        snprintf(buf, 64, "%d", this->tgid);
+
         next = rb_next_postorder(next);
 
         rb_erase(&this->node, root);
         fibers_tree_cleanup(this->fibers_root);
+        remove_proc_entry(buf, proc_fibers);
         kfree(this->fibers_root);
         kfree(this);
     }
@@ -222,6 +226,18 @@ static int openfibers_dev_open(struct inode *inodep, struct file *filep)
         pr_crit("failed fibers initialization for pid %d\n", current->pid);
         mutex_unlock(&initialization_mutex);
         return PTR_ERR(tgid_data);
+    } 
+    else 
+    {
+        char buf[64];
+        snprintf(buf, 64, "%d", tgid_data->tgid);
+        tgid_data->tgid_proc_fibers = proc_mkdir(buf, proc_fibers);
+        if (!tgid_data->tgid_proc_fibers)
+        {
+            pr_crit("Failed to create proc fibers subfolder\n");
+            mutex_unlock(&initialization_mutex);
+            return -EEXIST;
+        }
     }
     mutex_unlock(&initialization_mutex);
     return 0;
@@ -230,14 +246,18 @@ static int openfibers_dev_open(struct inode *inodep, struct file *filep)
 static void release_tgid_entry(struct kref *ref)
 {
     struct fibers_by_tgid_node *data = container_of(ref, struct fibers_by_tgid_node, refcount);
+    char buf[64];
 
     down_write(&fibers_by_tgid_tree_rwsem);
     down_write(&data->fibers_root_rwsem);
-    // // TODO: when lock and unlock?
+    
     pr_info("cleanup: %d\n", data->tgid);
     rb_erase(&data->node, &fibers_by_tgid_tree);
     fibers_tree_cleanup(data->fibers_root);
     kfree(data->fibers_root);
+
+    snprintf(buf, 64, "%d", data->tgid);
+    remove_proc_entry(buf, proc_fibers);
     up_write(&data->fibers_root_rwsem);
     up_write(&fibers_by_tgid_tree_rwsem);
     kfree(data);
@@ -280,6 +300,29 @@ static ssize_t openfibers_dev_read(struct file *filep, char *buffer, size_t len,
     pr_info("Device read\n");
     return 0;
 }
+
+static ssize_t proc_fiber_read(struct file *file, char __user *ubuf, size_t count, loff_t *ppos)
+{
+    char buf[BUFSIZE];
+    int len = 0;
+    printk(KERN_DEBUG "read handler\n");
+    if (*ppos > 0 || count < BUFSIZE)
+        return 0;
+    len += sprintf(buf, "irq = %d\n", irq);
+    len += sprintf(buf + len, "mode = %d\n", mode);
+
+    if (copy_to_user(ubuf, buf, len))
+        return -EFAULT;
+    *ppos = len;
+    return len;
+}
+
+static struct file_operations proc_fiber_operations =
+{
+        .owner = THIS_MODULE,
+        .read = proc_fiber_read,
+        //.write = mywrite,
+};
 
 static struct fibers_by_tgid_node* initialize_fibers_for_current(void)
 {
@@ -328,6 +371,7 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *fiber_data;
+    char buf[64];
 
     // also get ref_count if creating a running fiber
     // need to wrap in read lock to avoid deletion until got ref_count
@@ -353,7 +397,19 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     fiber_data->fiber.context.rdi = (unsigned long)args;
 
     if (unlikely(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data, tgid_data->fibers_root_rwsem)))
+    {
+        kfree(fiber_data);
         return -ENOMEM;
+    }
+
+    snprintf(buf, 64, "%d", fiber_data->fid);
+    fiber_data->fiber.proc_entry = proc_create(buf, 0444, tgid_data->tgid_proc_fibers, &proc_fiber_operations);
+    if(unlikely(!fiber_data->fiber.proc_entry))
+    {
+        pr_crit("Thread %d: proc file %s exists\n", current->pid, buf);
+        kfree(fiber_data);
+        return -EEXIST;
+    }
 
     return fiber_data->fid;
 }
@@ -646,6 +702,13 @@ static int __init fibers_init(void)
 
     pr_info("registered correctly with major number %d\n", majorNumber);
 
+    proc_fibers = proc_mkdir("fibers",NULL);
+    if(!proc_fibers)
+    {
+        pr_crit("Failed to create proc fibers folder\n");
+        return -1; 
+    }
+
     return 0;
 }
 
@@ -662,6 +725,7 @@ static void __exit fibers_cleanup(void)
 
     // cleanup all the fibers pending
     tgid_fibers_tree_cleanup(&fibers_by_tgid_tree);
+    remove_proc_entry("fibers", NULL);
 
     pr_info("cleanup done\n");
     return;
