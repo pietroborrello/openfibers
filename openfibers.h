@@ -87,8 +87,8 @@ typedef struct
     pid_t created_by;
     unsigned long activations;
     atomic_long_t failed_activations;
-    long total_ns;
-    long tmp_ns;
+    struct timespec total_ts;
+    struct timespec tmp_ts;
 } fiber_t;
 
 struct fibers_node
