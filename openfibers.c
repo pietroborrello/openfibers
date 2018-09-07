@@ -305,13 +305,14 @@ static ssize_t proc_fiber_read(struct file *file, char __user *ubuf, size_t coun
 {
     struct fibers_by_tgid_node *tgid_data;
     struct fibers_node *fiber_data;
-    char buf[100];
+    int n = 256;
+    char buf[n];
     int len = 0;
     pid_t tgid;
     fid_t fid;
     long tmp;
 
-    if (*ppos > 0 || count < 100)
+    if (*ppos > 0 || count < n)
         return 0;
 
     if(kstrtol(file->f_path.dentry->d_name.name, 10, &tmp))
@@ -325,10 +326,11 @@ static ssize_t proc_fiber_read(struct file *file, char __user *ubuf, size_t coun
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, tgid);
     fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, tgid_data->fibers_root_rwsem);
 
-    len += sprintf(buf, "running = %d\n", (int)atomic_read(&fiber_data->fiber.running));
-    len += sprintf(buf + len, "start = 0x%lx\n", (long unsigned int)fiber_data->fiber.start_address);
-    //len += sprintf(buf, "fid: %s\n", file->f_path.dentry->d_name.name);
-    //len += sprintf(buf + len, "pid: %s\n", file->f_path.dentry->d_parent->d_name.name);
+    len += snprintf(buf, n - len, "running = %d\n", atomic_read(&fiber_data->fiber.running));
+    len += snprintf(buf + len, n - len, "start = 0x%lx\n", (long unsigned int)fiber_data->fiber.start_address);
+    len += snprintf(buf + len, n - len, "created_by = %d\n", fiber_data->fiber.created_by);
+    len += snprintf(buf + len, n - len, "activations = %ld\n", fiber_data->fiber.activations);
+    len += snprintf(buf + len, n - len, "failed activations = %ld\n", atomic_long_read(&fiber_data->fiber.failed_activations));
 
     if (copy_to_user(ubuf, buf, len))
         return -EFAULT;
@@ -409,6 +411,10 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     atomic_set(&fiber_data->fiber.running, is_running);
     fiber_data->fiber.start_address = start_address;
     fiber_data->fiber.fls_idx = 0;
+    fiber_data->fiber.activations = is_running; // if convert_to_fiber start from 1
+    atomic_long_set(&fiber_data->fiber.failed_activations, 0);
+    fiber_data->fiber.created_by = current->pid;
+    fiber_data->fiber.total_ns = 0;
 
     memset(&fiber_data->fiber.context, 0, sizeof(exec_context_t));
     fiber_data->fiber.context.rsp = (unsigned long)stack_address;
@@ -441,6 +447,7 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
     struct rb_node *node;
     struct rb_node *tgid_node;
     fid_t fid;
+    struct timespec ts;
     //struct pt_regs *regs = task_pt_regs(current);
 
     long res = openfibers_ioctl_create_fiber(0, 0, 0, 1);
@@ -470,6 +477,8 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
         return -ENOMEM;
     }
     f->private_data = (void*) &new_fiber_data->fiber; // save current fiber for the thread
+    getnstimeofday(&ts);
+    new_fiber_data->fiber.tmp_ns = ts.ts_nsec;
     return new_fiber_data->fid;
 }
 
@@ -498,11 +507,12 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     if (unlikely(atomic_cmpxchg(&to_fiber_data->fiber.running, 0, 1))) // not succeded
     {
         pr_info("Thread %d switching failed from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
+        atomic_long_inc(&to_fiber_data->fiber.failed_activations);
         return -EBUSY;
     }
 
     pr_info("Thread %d switching from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
-
+    to_fiber_data->fiber.activations++;
     // HANDLE SWITCH
     regs = task_pt_regs(current);
 

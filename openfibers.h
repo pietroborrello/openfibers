@@ -11,6 +11,7 @@
 #include <linux/uaccess.h> // Required for the copy to user function
 #include <linux/kprobes.h> // Required for kprobe
 #include <linux/proc_fs.h>
+#include <linux/time.h>
 #include <asm/fpu/types.h>
 #include <asm/fpu/internal.h>
 
@@ -83,6 +84,11 @@ typedef struct
     unsigned long fls[4096];
     unsigned long fls_idx;
     struct proc_dir_entry *proc_entry;
+    pid_t created_by;
+    unsigned long activations;
+    atomic_long_t failed_activations;
+    long total_ns;
+    long tmp_ns;
 } fiber_t;
 
 struct fibers_node
