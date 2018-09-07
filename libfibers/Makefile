@@ -1,5 +1,4 @@
-SRC = 	thread.c \
-		libfibers.c
+SRC = 	libfibers.c
 		
 CFLAGS = -O3
 EXEC = libfibers
@@ -26,4 +25,4 @@ $(EXEC): $(OBJS)
 .PHONY: clean
 clean:
 	-rm $(OBJS)
-	-rm $(EXEC)
+	-rm $(EXEC).so

@@ -9,7 +9,6 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <stdbool.h>
-#include "thread.h"
 
 #define OPENFIBERS_IOCTL_MAGIC 'o'
 
@@ -165,78 +164,3 @@ void* libfibers_ioctl_convert_to_fiber(void)
     //printf("libfibers fiber %d conversion done\n", res);
     return (void*) res;
 }
-
-/*
-// Pick fibers randomly. This might return a fiber which is
-// currently scheduled on another thread.
-static int get_random_fiber(void)
-{
-    return random() % NUM_FIBERS;
-}
-
-void dummy_f(void* arg)
-{
-    unsigned int f;
-    while (1)
-    {
-        f = get_random_fiber();
-        //printf("tid %d in %d switching to %d\n", tid, fibers[(unsigned long)arg], fibers[f]);
-        sleep(0.5);
-        libfibers_ioctl_switch_to_fiber(fibers[f]);
-    }
-}
-
-static volatile bool init_complete;
-// This function lives in an "abandoned" fiber: no-one will ever
-// get back here!
-static void *thread_initialization(void *args)
-{
-    unsigned int f;
-    (void)args;
-
-    void* fid = libfibers_ioctl_convert_to_fiber();
-
-    while (!init_complete)
-        ;
-
-    while (true)
-    {
-        f = get_random_fiber();
-        //printf("WARNING thread %d: while switching to %d\n", tid, f);
-        libfibers_ioctl_switch_to_fiber(fibers[f]);
-    }
-}
-
-int main(int argc, char *argv[])
-{
-    int ret_val;
-    unsigned long i;
-
-    // Check if the number of fibers has been passed
-    if (argc < 2)
-    {
-        fprintf(stderr, "Usage: %s <num_threads>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    // Initialize pseudorandom generator
-    srandom(time(0));
-
-    void* f = libfibers_ioctl_convert_to_fiber();
-
-    //libfibers_ioctl_ping(libfibers_local_file_desc);
-
-    for (i = 0; i < NUM_FIBERS; i++)
-    {
-        fibers[i] = libfibers_ioctl_create_fiber(dummy_f, (void*)i);
-    }
-    sleep(1);
-    create_threads(atoi(argv[1]), thread_initialization, NULL);
-
-    init_complete = true;
-
-    sleep(3);
-    close(libfibers_local_file_desc);
-    return 0;
-}
-*/
