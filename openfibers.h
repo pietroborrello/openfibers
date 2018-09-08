@@ -13,6 +13,8 @@
 #include <linux/proc_fs.h>
 #include <linux/fs_struct.h>
 #include <linux/time.h>
+#include <linux/path.h>
+#include <linux/namei.h>
 #include <asm/fpu/types.h>
 #include <asm/fpu/internal.h>
 

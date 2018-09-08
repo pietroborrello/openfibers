@@ -12,6 +12,7 @@ MODULE_DESCRIPTION("openfibers: User Level Threads management module");
 
 static struct rb_root fibers_by_tgid_tree = RB_ROOT; // mantains fibers by tgid
 static struct proc_dir_entry *proc_fibers;
+static struct proc_dir_entry *proc_nofibers;
 
 static DECLARE_RWSEM(fibers_by_tgid_tree_rwsem);
 static DEFINE_MUTEX(initialization_mutex);
@@ -191,6 +192,7 @@ static void tgid_fibers_tree_cleanup(struct rb_root *root)
         rb_erase(&this->node, root);
         fibers_tree_cleanup(this->fibers_root);
         remove_proc_entry(buf, proc_fibers);
+        remove_proc_entry(buf, proc_nofibers);
         kfree(this->fibers_root);
         kfree(this);
     }
@@ -270,6 +272,7 @@ static void release_tgid_entry(struct kref *ref)
 
     snprintf(buf, 64, "%d", data->tgid);
     remove_proc_entry(buf, proc_fibers);
+    remove_proc_entry(buf, proc_nofibers);
     up_write(&data->fibers_root_rwsem);
     up_write(&fibers_by_tgid_tree_rwsem);
     kfree(data);
@@ -747,35 +750,45 @@ static inline struct task_struct *get_proc_task(struct inode *inode)
     return get_pid_task(proc_pid(inode), PIDTYPE_PID);
 }
 
-static int get_task_root(struct task_struct *task, struct path *root)
+static int get_task_fibers(struct task_struct *task, struct path *fibers)
 {
     int result = -ENOENT;
-
+    struct fibers_by_tgid_node *tgid_data;
+    pid_t tgid;
+    
     task_lock(task);
-    if (task->fs)
+
+    tgid = task->tgid;
+    tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, tgid);
+    if (unlikely(tgid_data))
     {
-        get_fs_root(task->fs, root);
+        char buf[64];
+        snprintf(buf, 64, "/proc/fibers/%d", tgid);
+        kern_path(buf, LOOKUP_FOLLOW, fibers);
+        result = 0;
+    } else {
+        kern_path("/proc/nofibers", LOOKUP_FOLLOW, fibers);
         result = 0;
     }
     task_unlock(task);
     return result;
 }
 
-static int proc_root_link(struct dentry *dentry, struct path *path)
+static int proc_fibers_link(struct dentry *dentry, struct path *path)
 {
     struct task_struct *task = get_proc_task(d_inode(dentry));
     int result = -ENOENT;
 
     if (task)
     {
-        result = get_task_root(task, path);
+        result = get_task_fibers(task, path);
         put_task_struct(task);
     }
     return result;
 }
 
 static const struct pid_entry fibers_base_stuff[] = {
-    LNK("fibers", proc_root_link),
+    LNK("fibers", proc_fibers_link),
 };
 
 static int
@@ -885,6 +898,12 @@ static int __init fibers_init(void)
     {
         pr_crit("Failed to create proc fibers folder\n");
         return -1; 
+    }
+    proc_nofibers = proc_mkdir("nofibers", NULL);
+    if (!proc_nofibers)
+    {
+        pr_crit("Failed to create proc nofibers folder\n");
+        return -1;
     }
     proc_pid_fiber_hack();
 
