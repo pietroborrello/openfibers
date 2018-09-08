@@ -32,8 +32,8 @@ static unsigned long cr0;
 static struct file_operations* _proc_tgid_base_operations;
 static struct inode_operations* _proc_tgid_base_inode_operations;
 static struct inode_operations _proc_pid_link_inode_operations;
-static int (*_proc_tgid_base_readdir)(struct file *, struct dir_context *);
-struct dentry *(*_proc_tgid_base_lookup)(struct inode *, struct dentry *, unsigned int);
+static int (*_proc_tgid_base_readdir)(struct file *, struct dir_context *) = NULL;
+struct dentry *(*_proc_tgid_base_lookup)(struct inode *, struct dentry *, unsigned int) = NULL;
 static int (*_proc_pident_readdir)(struct file *file, struct dir_context *ctx,
                                const struct pid_entry *ents, unsigned int nents);
 static struct dentry *(*_proc_pident_lookup)(struct inode *dir, 
@@ -192,7 +192,6 @@ static void tgid_fibers_tree_cleanup(struct rb_root *root)
         rb_erase(&this->node, root);
         fibers_tree_cleanup(this->fibers_root);
         remove_proc_entry(buf, proc_fibers);
-        remove_proc_entry(buf, proc_nofibers);
         kfree(this->fibers_root);
         kfree(this);
     }
@@ -272,7 +271,6 @@ static void release_tgid_entry(struct kref *ref)
 
     snprintf(buf, 64, "%d", data->tgid);
     remove_proc_entry(buf, proc_fibers);
-    remove_proc_entry(buf, proc_nofibers);
     up_write(&data->fibers_root_rwsem);
     up_write(&fibers_by_tgid_tree_rwsem);
     kfree(data);
@@ -813,43 +811,56 @@ static struct dentry *hacked_proc_tgid_base_lookup(struct inode *dir, struct den
 static int proc_pid_fiber_hack(void)
 {
     unsigned long sym_addr = kallsyms_lookup_name("proc_tgid_base_operations");
+    if(!sym_addr) 
+        return -1;
     _proc_tgid_base_operations = (struct file_operations*) sym_addr;
-    pr_info("%s (0x%lx)\n", "proc_tgid_base_operations", sym_addr);
+    //pr_info("%s (0x%lx)\n", "proc_tgid_base_operations", sym_addr);
 
     _proc_tgid_base_readdir = _proc_tgid_base_operations->iterate_shared;
 
     sym_addr = kallsyms_lookup_name("proc_tgid_base_inode_operations");
+    if(!sym_addr) 
+        return -1;
     _proc_tgid_base_inode_operations = (struct inode_operations*) sym_addr;
-    pr_info("%s (0x%lx)\n", "proc_tgid_base_inode_operations", sym_addr);
+    //pr_info("%s (0x%lx)\n", "proc_tgid_base_inode_operations", sym_addr);
 
     _proc_tgid_base_lookup = _proc_tgid_base_inode_operations->lookup;
 
     sym_addr = kallsyms_lookup_name("proc_pident_readdir");
+    if(!sym_addr)
+        return -1;
     _proc_pident_readdir = (void *)sym_addr;
-    pr_info("%s (0x%lx)\n", "proc_pident_readdir", sym_addr);
+    //pr_info("%s (0x%lx)\n", "proc_pident_readdir", sym_addr);
 
     sym_addr = kallsyms_lookup_name("proc_pident_lookup");
+    if (!sym_addr)
+        return -1;
     _proc_pident_lookup = (void *)sym_addr;
-    pr_info("%s (0x%lx)\n", "proc_pident_lookup", sym_addr);
+    //pr_info("%s (0x%lx)\n", "proc_pident_lookup", sym_addr);
 
-    sym_addr = kallsyms_lookup_name("proc_pid_link_inode_operations");;
+    sym_addr = kallsyms_lookup_name("proc_pid_link_inode_operations");
+    if (!sym_addr)
+        return -1;
     _proc_pid_link_inode_operations = *(struct inode_operations *)sym_addr;
-    pr_info("%s (0x%lx)\n", "proc_pid_link_inode_operations", sym_addr);
+    //pr_info("%s (0x%lx)\n", "proc_pid_link_inode_operations", sym_addr);
 
     unprotect_memory();
     _proc_tgid_base_inode_operations->lookup = hacked_proc_tgid_base_lookup;
     _proc_tgid_base_operations->iterate_shared = hacked_proc_tgid_base_readdir;
     protect_memory();
-
+    pr_info("successfully hooked proc lookups\n");
     return 0;
 }
 
 static int proc_pid_fiber_dehack(void)
 {
+    if(!_proc_tgid_base_readdir || !_proc_tgid_base_lookup)
+        return -1;
     unprotect_memory();
     _proc_tgid_base_operations->iterate_shared = _proc_tgid_base_readdir;
     _proc_tgid_base_inode_operations->lookup = _proc_tgid_base_lookup;
     protect_memory();
+    pr_info("successfully dehooked proc lookups\n");
     return 0;
 }
 
@@ -925,6 +936,7 @@ static void __exit fibers_cleanup(void)
     tgid_fibers_tree_cleanup(&fibers_by_tgid_tree);
     proc_pid_fiber_dehack();
     remove_proc_entry("fibers", NULL);
+    remove_proc_entry("nofibers", NULL);
 
     pr_info("cleanup done\n");
     return;
