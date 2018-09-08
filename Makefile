@@ -1,5 +1,5 @@
 obj-m := openfibers.o
-CC = gcc -Wall
+CC = gcc -O3 -Wall
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 

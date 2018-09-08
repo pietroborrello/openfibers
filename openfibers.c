@@ -68,10 +68,10 @@ static struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_
     return NULL;
 }
 
-static struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, struct rw_semaphore fibers_root_rwsem)
+static struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, struct rw_semaphore* fibers_root_rwsem)
 {
     struct rb_node *node;
-    down_read(&fibers_root_rwsem);
+    down_read(fibers_root_rwsem);
     node = root->rb_node;
 
     while (node)
@@ -87,11 +87,11 @@ static struct fibers_node *fid_rbtree_search(struct rb_root *root, fid_t fid, st
             node = node->rb_right;
         else
         {
-            up_read(&fibers_root_rwsem);
+            up_read(fibers_root_rwsem);
             return data;
         }
     }
-    up_read(&fibers_root_rwsem);
+    up_read(fibers_root_rwsem);
     return NULL;
 }
 
@@ -126,10 +126,10 @@ static int tgid_rbtree_insert(struct rb_root *root, struct fibers_by_tgid_node *
     return TRUE;
 }
 
-static int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, struct rw_semaphore fibers_root_rwsem)
+static int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, struct rw_semaphore* fibers_root_rwsem)
 {
     struct rb_node **new, *parent;
-    down_write(&fibers_root_rwsem);
+    down_write(fibers_root_rwsem);
     new = &(root->rb_node);
     parent = NULL;
 
@@ -145,7 +145,7 @@ static int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, str
             new = &((*new)->rb_right);
         else
         {
-            up_write(&fibers_root_rwsem);
+            up_write(fibers_root_rwsem);
             return FALSE;
         }
     }
@@ -153,7 +153,7 @@ static int fid_rbtree_insert(struct rb_root *root, struct fibers_node *data, str
     /* Add new node and rebalance tree. */
     rb_link_node(&data->node, parent, new);
     rb_insert_color(&data->node, root);
-    up_write(&fibers_root_rwsem);
+    up_write(fibers_root_rwsem);
     return TRUE;
 }
 
@@ -337,7 +337,7 @@ static ssize_t proc_fiber_read(struct file *file, char __user *ubuf, size_t coun
     tgid = (pid_t) tmp;
 
     tgid_data = tgid_rbtree_search(&fibers_by_tgid_tree, tgid);
-    fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, tgid_data->fibers_root_rwsem);
+    fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, &tgid_data->fibers_root_rwsem);
 
     len += snprintf(buf, n - len, "running = %d\n", atomic_read(&fiber_data->fiber.running));
     len += snprintf(buf + len, n - len, "start = 0x%lx\n", (long unsigned int)fiber_data->fiber.start_address);
@@ -435,7 +435,7 @@ static long openfibers_ioctl_create_fiber(void *stack_address, void (*start_addr
     fiber_data->fiber.context.rip = (unsigned long)start_address;
     fiber_data->fiber.context.rdi = (unsigned long)args;
 
-    if (unlikely(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data, tgid_data->fibers_root_rwsem)))
+    if (unlikely(!fid_rbtree_insert(tgid_data->fibers_root, fiber_data, &tgid_data->fibers_root_rwsem)))
     {
         kfree(fiber_data);
         return -ENOMEM;
@@ -475,7 +475,7 @@ static long openfibers_ioctl_convert_to_fiber(struct file *f)
         return -ENOMEM;
     }
 
-    new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, tgid_data->fibers_root_rwsem);
+    new_fiber_data = fid_rbtree_search(tgid_data->fibers_root, fid, &tgid_data->fibers_root_rwsem);
     if (unlikely(!new_fiber_data))
     {
         pr_crit("Thread %d unable to convert to fiber %d\n", current->pid, fid);
@@ -511,7 +511,7 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
         return -ENOENT;
     }
     tgid_data = container_of(current_fiber, struct fibers_node, fiber)->fibers_root_node;
-    to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber, tgid_data->fibers_root_rwsem);
+    to_fiber_data = fid_rbtree_search(tgid_data->fibers_root, to_fiber, &tgid_data->fibers_root_rwsem);
     if (unlikely(!to_fiber_data))
     {
         pr_crit("Thread %d has no fiber with id %u\n", current->pid, to_fiber);
@@ -521,15 +521,14 @@ static long openfibers_ioctl_switch_to_fiber(struct file *f, fid_t to_fiber)
     
     if (unlikely(atomic_cmpxchg(&to_fiber_data->fiber.running, 0, 1))) // not succeded
     {
-        pr_info("Thread %d switching failed from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
+        //pr_info("Thread %d switching failed from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
         atomic_long_inc(&to_fiber_data->fiber.failed_activations);
         return -EBUSY;
     }
 
-    pr_info("Thread %d switching from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
+    //pr_info("Thread %d switching from fiber %u to fiber %u\n", current->pid, current_fiber->fid, to_fiber);
     to_fiber_data->fiber.activations++;
-    current_fiber->total_ts = timespec_add(current_fiber->total_ts,
-                                           timespec_sub(ts, current_fiber->tmp_ts));
+    current_fiber->total_ts = timespec_add(current_fiber->total_ts, timespec_sub(ts, current_fiber->tmp_ts));
     to_fiber_data->fiber.tmp_ts = ts;
     // HANDLE SWITCH
     regs = task_pt_regs(current);
