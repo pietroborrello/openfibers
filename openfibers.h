@@ -11,6 +11,7 @@
 #include <linux/uaccess.h> // Required for the copy to user function
 #include <linux/kprobes.h> // Required for kprobe
 #include <linux/proc_fs.h>
+#include <linux/fs_struct.h>
 #include <linux/time.h>
 #include <asm/fpu/types.h>
 #include <asm/fpu/internal.h>
@@ -140,3 +141,18 @@ struct pid_entry
     const struct file_operations *fop;
     union proc_op op;
 };
+
+#define NOD(NAME, MODE, IOP, FOP, OP) \
+    {                                 \
+        .name = (NAME),               \
+        .len = sizeof(NAME) - 1,      \
+        .mode = MODE,                 \
+        .iop = IOP,                   \
+        .fop = FOP,                   \
+        .op = OP,                     \
+    }
+
+#define LNK(NAME, get_link)                    \
+    NOD(NAME, (S_IFLNK | S_IRWXUGO),           \
+        &_proc_pid_link_inode_operations, NULL, \
+        {.proc_get_link = get_link})

@@ -27,11 +27,18 @@ static int openfibers_dev_release(struct inode *, struct file *);
 static ssize_t openfibers_dev_read(struct file *, char *, size_t, loff_t *);
 static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
 
-unsigned long cr0;
-struct file_operations* _proc_tgid_base_operations;
+static unsigned long cr0;
+static struct file_operations* _proc_tgid_base_operations;
+static struct inode_operations* _proc_tgid_base_inode_operations;
+static struct inode_operations _proc_pid_link_inode_operations;
 static int (*_proc_tgid_base_readdir)(struct file *, struct dir_context *);
+struct dentry *(*_proc_tgid_base_lookup)(struct inode *, struct dentry *, unsigned int);
 static int (*_proc_pident_readdir)(struct file *file, struct dir_context *ctx,
                                const struct pid_entry *ents, unsigned int nents);
+static struct dentry *(*_proc_pident_lookup)(struct inode *dir, 
+					 struct dentry *dentry,
+					 const struct pid_entry *ents,
+					 unsigned int nents);
 
 static struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
 {
@@ -712,39 +719,115 @@ static inline void unprotect_memory(void)
     write_cr0(cr0 & ~0x00010000);
 }
 
+struct proc_inode
+{
+    struct pid *pid;
+    unsigned int fd;
+    union proc_op op;
+    struct proc_dir_entry *pde;
+    struct ctl_table_header *sysctl;
+    struct ctl_table *sysctl_entry;
+    struct hlist_node sysctl_inodes;
+    const struct proc_ns_operations *ns_ops;
+    struct inode vfs_inode;
+} __randomize_layout;
+
+static inline struct proc_inode *PROC_I(const struct inode *inode)
+{
+    return container_of(inode, struct proc_inode, vfs_inode);
+}
+
+static inline struct pid *proc_pid(struct inode *inode)
+{
+    return PROC_I(inode)->pid;
+}
+
+static inline struct task_struct *get_proc_task(struct inode *inode)
+{
+    return get_pid_task(proc_pid(inode), PIDTYPE_PID);
+}
+
+static int get_task_root(struct task_struct *task, struct path *root)
+{
+    int result = -ENOENT;
+
+    task_lock(task);
+    if (task->fs)
+    {
+        get_fs_root(task->fs, root);
+        result = 0;
+    }
+    task_unlock(task);
+    return result;
+}
+
+static int proc_root_link(struct dentry *dentry, struct path *path)
+{
+    struct task_struct *task = get_proc_task(d_inode(dentry));
+    int result = -ENOENT;
+
+    if (task)
+    {
+        result = get_task_root(task, path);
+        put_task_struct(task);
+    }
+    return result;
+}
+
 static const struct pid_entry fibers_base_stuff[] = {
     LNK("fibers", proc_root_link),
-}
+};
 
 static int
 hacked_proc_tgid_base_readdir(struct file * file, struct dir_context *ctx)
 {
     pr_info("readdir!\n");
-    proc_pident_readdir(file, ctx,
+    _proc_pident_readdir(file, ctx,
                         fibers_base_stuff, ARRAY_SIZE(fibers_base_stuff));
     return _proc_tgid_base_readdir(file, ctx);
 }
 
+static struct dentry *hacked_proc_tgid_base_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
+{
+    struct dentry* res;
+    res = _proc_tgid_base_lookup(dir, dentry, flags);
+    if(unlikely(IS_ERR(res) && PTR_ERR(res) == -ENOENT))
+        return _proc_pident_lookup(dir, dentry,
+                                fibers_base_stuff, ARRAY_SIZE(fibers_base_stuff));
+    return res;
+}
+
 static int proc_pid_fiber_hack(void)
 {
-    char *sym_name = "proc_tgid_base_operations";
-    unsigned long sym_addr = kallsyms_lookup_name(sym_name);
+    unsigned long sym_addr = kallsyms_lookup_name("proc_tgid_base_operations");
     _proc_tgid_base_operations = (struct file_operations*) sym_addr;
-    pr_info("%s (0x%lx)\n", sym_name, sym_addr);
+    pr_info("%s (0x%lx)\n", "proc_tgid_base_operations", sym_addr);
 
-    sym_name = "proc_tgid_base_readdir";
-    sym_addr = kallsyms_lookup_name(sym_name);
-    _proc_tgid_base_readdir = (void*) sym_addr;
-    pr_info("%s (0x%lx)\n", sym_name, sym_addr);
+    _proc_tgid_base_readdir = _proc_tgid_base_operations->iterate_shared;
 
-    sym_name = "proc_pident_readdir";
-    sym_addr = kallsyms_lookup_name(sym_name);
+    sym_addr = kallsyms_lookup_name("proc_tgid_base_inode_operations");
+    _proc_tgid_base_inode_operations = (struct inode_operations*) sym_addr;
+    pr_info("%s (0x%lx)\n", "proc_tgid_base_inode_operations", sym_addr);
+
+    _proc_tgid_base_lookup = _proc_tgid_base_inode_operations->lookup;
+
+    sym_addr = kallsyms_lookup_name("proc_pident_readdir");
     _proc_pident_readdir = (void *)sym_addr;
-    pr_info("%s (0x%lx)\n", sym_name, sym_addr);
+    pr_info("%s (0x%lx)\n", "proc_pident_readdir", sym_addr);
+
+    sym_addr = kallsyms_lookup_name("proc_pident_lookup");
+    _proc_pident_lookup = (void *)sym_addr;
+    pr_info("%s (0x%lx)\n", "proc_pident_lookup", sym_addr);
+
+    sym_addr = kallsyms_lookup_name("proc_pid_link_inode_operations");;
+    _proc_pid_link_inode_operations = *(struct inode_operations *)sym_addr;
+    pr_info("%s (0x%lx)\n", "proc_pid_link_inode_operations", sym_addr);
 
     unprotect_memory();
+    _proc_tgid_base_inode_operations->lookup = hacked_proc_tgid_base_lookup;
     _proc_tgid_base_operations->iterate_shared = hacked_proc_tgid_base_readdir;
     protect_memory();
+
     return 0;
 }
 
@@ -752,6 +835,7 @@ static int proc_pid_fiber_dehack(void)
 {
     unprotect_memory();
     _proc_tgid_base_operations->iterate_shared = _proc_tgid_base_readdir;
+    _proc_tgid_base_inode_operations->lookup = _proc_tgid_base_lookup;
     protect_memory();
     return 0;
 }
