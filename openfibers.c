@@ -27,6 +27,11 @@ static int openfibers_dev_release(struct inode *, struct file *);
 static ssize_t openfibers_dev_read(struct file *, char *, size_t, loff_t *);
 static long openfibers_dev_ioctl(struct file *, unsigned int, unsigned long);
 
+unsigned long cr0;
+struct file_operations* _proc_tgid_base_operations;
+static int (*_proc_tgid_base_readdir)(struct file *, struct dir_context *);
+static int (*_proc_pident_readdir)(struct file *file, struct dir_context *ctx,
+                               const struct pid_entry *ents, unsigned int nents);
 
 static struct fibers_by_tgid_node *tgid_rbtree_search(struct rb_root *root, pid_t tgid)
 {
@@ -697,6 +702,59 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
 }
 
 
+static inline void protect_memory(void)
+{
+    write_cr0(cr0);
+}
+
+static inline void unprotect_memory(void)
+{
+    write_cr0(cr0 & ~0x00010000);
+}
+
+static const struct pid_entry fibers_base_stuff[] = {
+    LNK("fibers", proc_root_link),
+}
+
+static int
+hacked_proc_tgid_base_readdir(struct file * file, struct dir_context *ctx)
+{
+    pr_info("readdir!\n");
+    proc_pident_readdir(file, ctx,
+                        fibers_base_stuff, ARRAY_SIZE(fibers_base_stuff));
+    return _proc_tgid_base_readdir(file, ctx);
+}
+
+static int proc_pid_fiber_hack(void)
+{
+    char *sym_name = "proc_tgid_base_operations";
+    unsigned long sym_addr = kallsyms_lookup_name(sym_name);
+    _proc_tgid_base_operations = (struct file_operations*) sym_addr;
+    pr_info("%s (0x%lx)\n", sym_name, sym_addr);
+
+    sym_name = "proc_tgid_base_readdir";
+    sym_addr = kallsyms_lookup_name(sym_name);
+    _proc_tgid_base_readdir = (void*) sym_addr;
+    pr_info("%s (0x%lx)\n", sym_name, sym_addr);
+
+    sym_name = "proc_pident_readdir";
+    sym_addr = kallsyms_lookup_name(sym_name);
+    _proc_pident_readdir = (void *)sym_addr;
+    pr_info("%s (0x%lx)\n", sym_name, sym_addr);
+
+    unprotect_memory();
+    _proc_tgid_base_operations->iterate_shared = hacked_proc_tgid_base_readdir;
+    protect_memory();
+    return 0;
+}
+
+static int proc_pid_fiber_dehack(void)
+{
+    unprotect_memory();
+    _proc_tgid_base_operations->iterate_shared = _proc_tgid_base_readdir;
+    protect_memory();
+    return 0;
+}
 
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C file. The __init
@@ -706,6 +764,8 @@ static char *openfibers_devnode(struct device *dev, umode_t *mode)
  */
 static int __init fibers_init(void)
 {
+    cr0 = read_cr0();
+
     // Try to dynamically allocate a major number for the device -- more difficult but worth it
     majorNumber = register_chrdev(0, DEVICE_NAME, &dev_fops);
     if (majorNumber < 0)
@@ -742,6 +802,7 @@ static int __init fibers_init(void)
         pr_crit("Failed to create proc fibers folder\n");
         return -1; 
     }
+    proc_pid_fiber_hack();
 
     return 0;
 }
@@ -759,6 +820,7 @@ static void __exit fibers_cleanup(void)
 
     // cleanup all the fibers pending
     tgid_fibers_tree_cleanup(&fibers_by_tgid_tree);
+    proc_pid_fiber_dehack();
     remove_proc_entry("fibers", NULL);
 
     pr_info("cleanup done\n");
