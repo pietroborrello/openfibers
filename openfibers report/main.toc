@@ -1,0 +1,15 @@
+\select@language {english}
+\contentsline {section}{\numberline {1}Introduction}{2}
+\contentsline {section}{\numberline {2}APIs}{2}
+\contentsline {section}{\numberline {3}Module Design Goals}{2}
+\contentsline {subsection}{\numberline {3.1}Fibers Operation}{3}
+\contentsline {subsection}{\numberline {3.2}FLS Operation}{3}
+\contentsline {subsection}{\numberline {3.3}Components}{4}
+\contentsline {section}{\numberline {4}Module Implementation}{4}
+\contentsline {subsection}{\numberline {4.1}Fibers Operation}{6}
+\contentsline {subparagraph}{ConvertToFiber}{6}
+\contentsline {subparagraph}{CreateFiber}{6}
+\contentsline {subparagraph}{SwitchToFiber}{7}
+\contentsline {subsection}{\numberline {4.2}FLS Operation}{7}
+\contentsline {subsection}{\numberline {4.3}Proc Statistics}{7}
+\contentsline {section}{\numberline {5}Evaluation}{8}
