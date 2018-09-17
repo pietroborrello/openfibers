@@ -33,7 +33,7 @@ extern void *libfibers_ioctl_convert_to_fiber(void);
 #define FlsAlloc(lpCallback) libfibers_ioctl_fls_alloc()
 #define FlsFree(dwFlsIndex) libfibers_ioctl_fls_free(dwFlsIndex)
 #define FlsGetValue(dwFlsIndex) libfibers_ioctl_fls_get(dwFlsIndex)
-#define FlsSetValue(dwFlsIndex, lpFlsData) libfibers_ioctl_fls_set((dwFlsIndex), (long long)
+#define FlsSetValue(dwFlsIndex, lpFlsData) libfibers_ioctl_fls_set((dwFlsIndex), (long long) (lpFlsData))
 ```
 
 And compile with `-lfibers`
