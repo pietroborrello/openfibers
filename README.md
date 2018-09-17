@@ -5,19 +5,19 @@ Linux kernel module for User Level Threads (Fibers)
 
 ## Module
 
-```
-make
-sudo insmod ./openfibers.ko
+```shell
+$ make
+$ sudo insmod ./openfibers.ko
 ```
 
 ## Shared Library
-```
-make
-sudo make install
+```shell
+$ make
+$ sudo make install
 ```
 
-Then include in your code:
-```
+Then if you want to use is with Microsoft Fibers APIs, include in your code:
+```c
 extern long libfibers_ioctl_fls_alloc(void);
 extern long libfibers_ioctl_fls_get(long idx);
 extern bool libfibers_ioctl_fls_free(long idx);
