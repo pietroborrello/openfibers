@@ -1,5 +1,6 @@
 # openfibers
 Linux kernel module for User Level Threads (Fibers)
+see [Windows Fibers](https://docs.microsoft.com/en-us/windows/desktop/procthread/fibers)
 
 # Installation
 
